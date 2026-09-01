@@ -5,7 +5,15 @@ toolkit (`ircam`) plus a requirements-flowdown analysis built on it.
 
 ## Start here
 
-**[docs/physics_analysis.md](docs/physics_analysis.md)** — the analysis:
+**[docs/nozzle_pyrometry.md](docs/nozzle_pyrometry.md)** — the mission
+analysis: video thermography of an engine nozzle (500–3000 °C, primary
+1500–3000 °C) by two-notch visible/NIR ratio pyrometry — one vs two
+notches, optimal notch placement and widths, dynamic range, and a
+recommended design. Computed tables in
+[docs/computed_nozzle_results.md](docs/computed_nozzle_results.md).
+
+**[docs/physics_analysis.md](docs/physics_analysis.md)** — the general
+framework:
 scene radiometry, band trade (MWIR vs LWIR), atmosphere, optics,
 detector physics, NETD both ways (uncooled D\* and cooled photon chain),
 Johnson-criteria DRI ranges, and a worked flowdown to a derived
@@ -23,6 +31,7 @@ regenerated into [docs/computed_results.md](docs/computed_results.md).
 | `ircam.detector` | FPA description, Lloyd D\*-NETD, BLIP D\* |
 | `ircam.radiometry` | End-to-end photon-detector chain: electrons, noise, NETD, SNR |
 | `ircam.range_performance` | Johnson-criteria DRI: sampling- and contrast-limited ranges |
+| `ircam.pyrometry` | Visible/NIR ratio pyrometry: notch filters, silicon QE, NEdT, emissivity bias |
 
 ## Usage
 
