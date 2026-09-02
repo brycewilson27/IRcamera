@@ -8,7 +8,7 @@ toolkit (`ircam`) plus a requirements-flowdown analysis built on it.
 `streamlit_app.py` is an interactive two-notch pyrometry designer on the
 Sony IMX900 sensor model: notch spacing/width vs temperature sensitivity,
 the one-notch radiometric-uncertainty story, and temperature certainty vs
-scene temperature for your chosen pair.
+scene temperature for the selected pair.
 
 ```bash
 pip install -r requirements.txt
@@ -64,8 +64,13 @@ planck.band_radiance(300.0, LWIR.lam1, LWIR.lam2)  # 54.9 W/m^2/sr
 
 ## Validation
 
-`tests/test_physics.py` checks the code against independent references:
-Planck integral vs Stefan–Boltzmann, Wien peak, blackbody fractions vs
-the series expansion, analytic vs finite-difference thermal derivatives,
-photon/energy radiance consistency, NETD scaling laws, and
-Johnson-range round trips.
+[docs/verification.md](docs/verification.md) is the formula-by-formula
+record: each formula, the independent reference it is checked against,
+the test that enforces it, and which inputs are assumptions rather than
+physics. Highlights: Planck integrals vs Stefan–Boltzmann (energy and
+photon forms), Wien constant from its transcendental root, blackbody
+fractions vs the series expansion and textbook anchors, the pupil solid
+angle by numerical integration, the Airy coefficient from the Bessel
+zero, and the Lloyd D\*-NETD route cross-checked against the
+photon-counting route at the BLIP limit. Sensor values are transcription-
+checked against their source. Run `pytest tests/`.

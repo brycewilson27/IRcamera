@@ -25,7 +25,14 @@ from ircam.pyrometry import (
     electron_rate,
     equivalent_wavelength,
 )
-from ircam.sensors import IMX900_SPECS, imx900_camera, imx900_qe
+from ircam.sensors import (
+    IMX900_BASLER_EMVA_PEAK_QE,
+    IMX900_GAIN_MODES,
+    IMX900_QE_TABLE_PEAK,
+    IMX900_SPECS,
+    imx900_camera,
+    imx900_qe,
+)
 
 # ---------------------------------------------------------------- palette
 # Reference dataviz palette (light mode), categorical slots in fixed order.
@@ -95,9 +102,10 @@ def sigma_ratio_vs_t(temps_k, l1, w1, l2, w2, cam, t_max_k, fill, fps,
 @st.cache_data(show_spinner="Computing notch-pair map...")
 def pair_map(t_eval_k, f_number, tau, read_noise, well, t_max_k, fill, fps):
     """Worst-case NEdT over a (lambda1, lambda2) grid."""
-    cam = imx900_camera(f_number, tau, read_noise, well)
+    cam = imx900_camera(f_number, tau, read_noise=read_noise,
+                        well_capacity=well)
     l1_grid = np.linspace(420e-9, 760e-9, 35)
-    l2_grid = np.linspace(700e-9, 1000e-9, 31)
+    l2_grid = np.linspace(700e-9, 975e-9, 29)
     z = np.full((len(l2_grid), len(l1_grid)), np.nan)
     for i, l2 in enumerate(l2_grid):
         for j, l1 in enumerate(l1_grid):
@@ -113,7 +121,7 @@ st.sidebar.header("Notch pair")
 l1_nm = st.sidebar.slider("Short notch center [nm]", 420, 750, 620, 5)
 w1_nm = st.sidebar.slider("Short notch width [nm]", 10, 80, 30, 5)
 l2_nm = st.sidebar.slider("Long notch center [nm]", max(700, l1_nm + 60),
-                          1000, max(870, l1_nm + 60), 5)
+                          975, max(870, l1_nm + 60), 5)
 w2_nm = st.sidebar.slider("Long notch width [nm]", 10, 80, 50, 5)
 
 st.sidebar.header("Optics & exposure")
@@ -132,16 +140,26 @@ st.sidebar.header("Averaging")
 binning = st.sidebar.select_slider("Pixel binning", [1, 2, 4], value=2)
 frames = st.sidebar.slider("Frames averaged", 1, 32, 8)
 
-with st.sidebar.expander("Sensor: Sony IMX900"):
-    st.caption(IMX900_SPECS["name"] + " -- " + IMX900_SPECS["format"]
-               + ". QE curve approximate; replace with datasheet values.")
-    read_noise = st.number_input("Read noise [e- rms]", 1.0, 10.0,
-                                 IMX900_SPECS["read_noise"], 0.5)
-    well = st.number_input("Full well [e-]", 4000.0, 30000.0,
-                           IMX900_SPECS["well_capacity"], 1000.0)
+with st.sidebar.expander("Sensor: Sony IMX900", expanded=True):
+    st.caption(IMX900_SPECS["name"] + " -- " + IMX900_SPECS["format"] + ".")
+    gain_mode = st.radio(
+        "Conversion-gain mode", ["lcg", "hcg"], horizontal=True,
+        format_func=lambda m: {"lcg": "LCG (large well)",
+                               "hcg": "HCG (low noise)"}[m],
+        help="LCG: FRAMOS EMVA 1288, 9458 e- well / 5.56 e- read. "
+             "HCG: PTC-measured, 2183 e- well / 1.39 e- read. A scene with "
+             "3000 C content is well-limited, so LCG is the default.")
+    mode = IMX900_GAIN_MODES[gain_mode]
+    read_noise = st.number_input("Read noise [e- rms]", 0.5, 10.0,
+                                 mode["read_noise"], 0.1,
+                                 key=f"rn_{gain_mode}")
+    well = st.number_input("Full well [e-]", 1000.0, 30000.0,
+                           mode["well_capacity"], 100.0,
+                           key=f"well_{gain_mode}")
 
 TAU_EFF = tau_optics * 10.0**(-nd_od)
-CAM = imx900_camera(f_number, TAU_EFF, read_noise, well)
+CAM = imx900_camera(f_number, TAU_EFF, gain_mode, read_noise=read_noise,
+                    well_capacity=well)
 L1, W1, L2, W2 = l1_nm * 1e-9, w1_nm * 1e-9, l2_nm * 1e-9, w2_nm * 1e-9
 T_MAX_K = t_max_c + 273.15
 LAM_EQ = equivalent_wavelength(L1, L2)
@@ -149,7 +167,8 @@ LAM_EQ = equivalent_wavelength(L1, L2)
 st.title("Two-notch ratio pyrometry designer")
 st.caption(f"Engine-nozzle thermography, 1500-3000 C primary band, on the "
            f"Sony IMX900 ({IMX900_SPECS['pixel_pitch'] * 1e6:.2f} um pixels, "
-           f"{well / 1e3:.0f} ke- well, {read_noise:g} e- read). Current pair: "
+           f"{gain_mode.upper()} mode: {well / 1e3:.2f} ke- well, "
+           f"{read_noise:g} e- read). Selected pair: "
            f"**{l1_nm} / {l2_nm} nm**, equivalent wavelength "
            f"lam_eq = {LAM_EQ * 1e9:.0f} nm.")
 
@@ -198,7 +217,7 @@ with tab1:
         text=[f"optimum {l1_sweep[i_opt] * 1e9:.0f} nm"], textposition="top center",
         textfont=dict(color=INK2, size=11), showlegend=False, hoverinfo="skip"))
     fig.add_vline(x=l1_nm, line=dict(color=MUTED, dash="dot", width=1),
-                  annotation_text=f"your lam1 = {l1_nm} nm",
+                  annotation_text=f"selected lam1 = {l1_nm} nm",
                   annotation_font_color=MUTED)
     st.plotly_chart(style(
         fig, f"Short notch center lam1 [nm]   (long notch fixed at {l2_nm} nm)",
@@ -265,7 +284,7 @@ with tab1:
             x=[l1_nm], y=[l2_nm], mode="markers",
             marker=dict(symbol="star", size=14, color=YELLOW,
                         line=dict(color=INK, width=1)),
-            name="your pair", hovertemplate="your pair<extra></extra>"))
+            name="selected pair", hovertemplate="selected pair<extra></extra>"))
         for x in (589, 656.3):
             figm.add_vline(x=x, line=dict(color=MUTED, dash="dot", width=1))
         for y in (766.5, 940):
@@ -437,16 +456,27 @@ with tab3:
         fig5, "Scene temperature [C]", "Electrons per pixel per frame",
         logy=True), use_container_width=True)
 
-    with st.expander("IMX900 model & assumptions"):
+    with st.expander("IMX900 model & provenance"):
         st.markdown(
             f"- {IMX900_SPECS['name']}: {IMX900_SPECS['format']}, "
-            f"{IMX900_SPECS['pixel_pitch'] * 1e6:.2f} um pixels, ~10 ke- "
-            "saturation, enhanced NIR (~2x conventional at 850 nm).\n"
-            f"- Read noise {read_noise:g} e- and the QE curve below are "
-            "*assumptions* at Pregius-S class values -- swap in datasheet "
-            "numbers in `ircam/sensors.py`. In the saturation-capped regime "
-            "QE cancels out of the precision budget (it rescales exposure, "
-            "not electrons).\n"
+            f"{IMX900_SPECS['pixel_pitch'] * 1e6:.2f} um pixels, 12-bit ADC. "
+            "Sensor values are taken verbatim from the StarTrackerCentroid "
+            "repository presets (`framegen/sensors/presets/imx900.py`).\n"
+            f"- LCG: {IMX900_GAIN_MODES['lcg']['well_capacity']:.0f} e- well, "
+            f"{IMX900_GAIN_MODES['lcg']['read_noise']:.2f} e- read "
+            f"({IMX900_GAIN_MODES['lcg']['source']}). HCG: "
+            f"{IMX900_GAIN_MODES['hcg']['well_capacity']:.0f} e- well, "
+            f"{IMX900_GAIN_MODES['hcg']['read_noise']:.2f} e- read "
+            f"({IMX900_GAIN_MODES['hcg']['source']}).\n"
+            "- QE: the 121-point tabulated curve (400-1000 nm) from the same "
+            f"repository, whose raw peak of {IMX900_QE_TABLE_PEAK:.3f} is "
+            "flagged there as a probable normalised response; it is scaled "
+            f"here to the Basler EMVA 1288 absolute peak of "
+            f"{IMX900_BASLER_EMVA_PEAK_QE:.3f}. In the saturation-capped "
+            "regime the scale cancels out of the precision budget.\n"
+            f"- The {IMX900_SPECS['min_exposure'] * 1e6:.0f} us minimum "
+            "exposure is an assumption. Dark current (4.5 e-/s at 60 C) is "
+            "negligible at these exposures and not modelled.\n"
             "- Slope d(lnR)/dT uses the Wien limit (< 3% from full Planck "
             "integrals here); electron counts use full integrals of "
             "QE x filter x Planck."
@@ -454,7 +484,7 @@ with tab3:
         lam_qe = np.linspace(350e-9, 1100e-9, 200)
         figq = go.Figure(go.Scatter(
             x=lam_qe * 1e9, y=imx900_qe(lam_qe) * 100,
-            line=dict(color=BLUE, width=2), name="IMX900 QE (approx.)",
+            line=dict(color=BLUE, width=2), name="IMX900 QE (tabulated)",
             hovertemplate="%{x:.0f} nm: %{y:.0f}%<extra></extra>"))
         for x, lbl in ((l1_nm, "lam1"), (l2_nm, "lam2")):
             figq.add_vline(x=x, line=dict(color=MUTED, dash="dot", width=1),

@@ -2,7 +2,7 @@
 
 Johnson-criteria style analysis. N50 is the number of resolvable cycles
 across the target critical dimension for a 50% probability of the task.
-We use the NVESD two-dimensional target values:
+The NVESD two-dimensional target values are used:
 
     detect     N50 = 0.75
     recognize  N50 = 3.0

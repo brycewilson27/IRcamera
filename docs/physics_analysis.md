@@ -88,7 +88,7 @@ This is the physical root of the classic band trade:
 The atmosphere transmits only inside the 3–5 µm and 8–14 µm windows
 (SWIR windows exist below 2.5 µm); between them, H₂O and CO₂ absorb
 almost completely, and CO₂ notches out 4.2–4.4 µm inside MWIR. Within a
-window we model the band-averaged path loss as Beer–Lambert,
+window the band-averaged path loss is modelled as Beer–Lambert,
 τ(R) = e^(−βR), with clear sea-level extinctions of roughly
 0.12 /km (MWIR), 0.17 /km (LWIR), 0.25 /km (SWIR):
 
