@@ -31,6 +31,24 @@ because it exceeds the radiance of a 3000 C surface.
 Solar spectral irradiance is a coarse ASTM G173-03 global-tilt (AM1.5G)
 table, 400-1000 nm, accurate to roughly 10% and smoothing over the narrow
 O2 and H2O absorption features.
+
+Plume illumination
+------------------
+A luminous plume (soot or particle laden, radiating as a gray body of
+emissivity eps_pl at temperature T_pl) illuminates the wall. A diffuse
+wall element that sees the plume over a cosine-weighted hemisphere
+fraction F (the view factor) reflects
+
+    L_refl(lam) = rho(th_v) F eps_pl(lam) L_bb(lam, T_pl),
+
+and the same plume radiance also reaches every pixel through veiling
+glare in the optics, L_glare = g eps_pl L_bb(T_pl), with g the veiling
+glare index times the plume's area fraction in the field. Both are
+additive; unlike sunlight they exist only during the burn, so they cannot
+be captured by a pre-ignition frame -- the plume radiance must be measured
+from plume pixels in the same image and the view factor modelled. Clean
+(non-sooty) plumes have band emissivities of order 1e-3 to 1e-2 in the
+notches; particle-laden plumes reach 0.1 to 0.9.
 """
 
 from __future__ import annotations
@@ -58,6 +76,8 @@ __all__ = [
     "ratio_apparent_temperature",
     "specular_glint_ratio",
     "foreshortening",
+    "PlumeSource",
+    "plume_reflected_electron_rate",
 ]
 
 #: Solid angle of the solar disc [sr].
@@ -161,11 +181,56 @@ def solar_reflected_electron_rate(filt: NotchFilter, cam: PyroCamera,
                  * cam.optics_transmittance)
 
 
+@dataclass(frozen=True)
+class PlumeSource:
+    """Luminous plume illuminating the wall and the optics.
+
+    emissivity is the plume band emissivity at lam_ref; alpha gives its
+    spectral slope, eps(lam) = emissivity (lam_ref/lam)^alpha (0 = gray,
+    ~1 = Rayleigh soot). view_factor is the cosine-weighted fraction of the
+    wall element's hemisphere filled by plume; stray_light is the veiling
+    glare index times the plume's area fraction in the field; residual is
+    the fraction left after an in-frame subtraction.
+    """
+
+    temperature: float
+    emissivity: float = 0.0
+    alpha: float = 0.0
+    lam_ref: float = 870e-9
+    view_factor: float = 0.2
+    stray_light: float = 0.0
+    residual: float = 1.0
+
+    def band_emissivity(self, lam):
+        return self.emissivity * (self.lam_ref / np.asarray(lam, dtype=float)) ** self.alpha
+
+    def radiance(self, lam):
+        """Plume spectral radiance [W m^-2 sr^-1 m^-1]."""
+        return self.band_emissivity(lam) * planck.spectral_radiance(lam, self.temperature)
+
+
+def plume_reflected_electron_rate(filt: NotchFilter, cam: PyroCamera,
+                                  material: OpticalConstants, theta_v: float,
+                                  plume: PlumeSource | None, n_lam: int = 101) -> float:
+    """Electron rate from plume light reflected by the wall plus veiling glare."""
+    if plume is None or plume.emissivity <= 0.0 or plume.residual <= 0.0:
+        return 0.0
+    lam = np.linspace(filt.lam_min, filt.lam_max, n_lam)
+    rho = 1.0 - material.emissivity(theta_v, lam)
+    radiance = ((rho * plume.view_factor + plume.stray_light) * plume.radiance(lam)
+                * plume.residual)
+    photon_radiance = radiance * lam / (H * C)
+    integrand = cam.quantum_efficiency(lam) * filt.peak_transmission * photon_radiance
+    return float(np.trapezoid(integrand, lam) * cam.pixel_etendue
+                 * cam.optics_transmittance)
+
+
 def one_band_apparent_temperature(t_true: float, filt: NotchFilter, cam: PyroCamera,
                                   material: OpticalConstants, theta_v: float,
                                   theta_s: float = 0.0, sun_factor: float = 0.0,
                                   cal_theta: float = 0.0,
-                                  sun_residual: float = 1.0) -> float:
+                                  sun_residual: float = 1.0,
+                                  plume: PlumeSource | None = None) -> float:
     """Temperature a one-band instrument reports.
 
     The instrument is calibrated with the material's emissivity at
@@ -175,7 +240,8 @@ def one_band_apparent_temperature(t_true: float, filt: NotchFilter, cam: PyroCam
     """
     s_meas = (thermal_electron_rate(t_true, filt, cam, material, theta_v)
               + sun_residual * solar_reflected_electron_rate(
-                  filt, cam, material, theta_v, theta_s, sun_factor))
+                  filt, cam, material, theta_v, theta_s, sun_factor)
+              + plume_reflected_electron_rate(filt, cam, material, theta_v, plume))
 
     def eps_cal(lam):
         return material.emissivity(cal_theta, lam)
@@ -188,7 +254,8 @@ def ratio_apparent_temperature(t_true: float, pyro: RatioPyrometer,
                                material: OpticalConstants, theta_v: float,
                                theta_s: float = 0.0, sun_factor: float = 0.0,
                                cal_theta: float = 0.0,
-                               sun_residual: float = 1.0) -> float:
+                               sun_residual: float = 1.0,
+                               plume: PlumeSource | None = None) -> float:
     """Temperature a two-band ratio instrument reports.
 
     Calibration absorbs eps_1/eps_2 at ``cal_theta``; only the angular
@@ -199,7 +266,9 @@ def ratio_apparent_temperature(t_true: float, pyro: RatioPyrometer,
     for filt in (pyro.filter_short, pyro.filter_long):
         signals.append(thermal_electron_rate(t_true, filt, cam, material, theta_v)
                        + sun_residual * solar_reflected_electron_rate(
-                           filt, cam, material, theta_v, theta_s, sun_factor))
+                           filt, cam, material, theta_v, theta_s, sun_factor)
+                       + plume_reflected_electron_rate(filt, cam, material, theta_v,
+                                                       plume))
     r_meas = signals[0] / signals[1]
 
     def eps_cal(lam):

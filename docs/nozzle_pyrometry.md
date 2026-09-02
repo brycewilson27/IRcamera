@@ -202,8 +202,10 @@ covers 300–900 °C — a bolt-on, not a redesign.
   [`viewing_geometry_and_sun.md`](viewing_geometry_and_sun.md): directional
   emissivity collapses past ~60° from the normal (mostly cancelled by the
   ratio), reflected sun is additive and biases the ratio *more* than one
-  band below ~1500 °C (a pre-ignition frame subtracts it), and a specular
-  sun glint saturates the pixel outright.
+  band below ~1500 °C (a pre-ignition frame subtracts it), plume light
+  reflected by the wall does the same 10–100× more strongly for a luminous
+  plume (subtractable only from in-frame plume pixels plus a view-factor
+  model), and a specular sun glint saturates the pixel outright.
 * **What the ratio does NOT cancel:** wavelength-*dependent* effects —
   chromatic transmission drift of a fouling window (mild between 620 and
   870 nm), differential plume scattering, non-gray ε. The third

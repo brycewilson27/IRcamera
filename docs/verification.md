@@ -8,7 +8,7 @@ second derivation route). "Derivation-consistent" means the formula is a
 standard definition or algebraic identity with no independent numerical
 reference in the suite. "Assumption" means a parameter value, not physics.
 
-Run: `pytest tests/` (44 tests). Test files: `test_physics.py`,
+Run: `pytest tests/` (46 tests). Test files: `test_physics.py`,
 `test_pyrometry.py`, `test_verification.py`, `test_surface.py`, `test_app.py`.
 
 ## Constants
@@ -87,9 +87,11 @@ Run: `pytest tests/` (44 tests). Test files: `test_physics.py`,
 | L_refl = (1 − ε(θ_v)) E_sun cos θ_s / π | `solar_reflected_electron_rate` | zero when shaded or sun behind the surface; warm bias sign | `test_solar_terms`, `test_one_band_round_trip_and_signs` | Verified (algebra, signs) |
 | One-band and ratio apparent temperature by exact inversion | `one_band_apparent_temperature`, `ratio_apparent_temperature` | round trip at the calibration angle; ratio bias exactly zero when both bands share optical constants; ratio sun bias > 2× one-band sun bias at 1500 °C; 90% subtraction scales the bias ~10× | `test_one_band_round_trip_and_signs`, `test_ratio_cancels_angular_factor_for_dielectric`, `test_sun_biases_ratio_more_than_one_band_at_1500c` | Verified |
 | Glint ratio (1 − ε) L_sun / (ε L_bb), L_sun = E_sun/Ω_sun | `specular_glint_ratio` | > 1 at 3000 °C | `test_solar_terms` | Verified (order of magnitude) |
+| Plume reflection L = [(1 − ε(θ_v)) F + g] ε_pl(λ) L_bb(λ, T_pl); ε_pl(λ) = ε_pl (λ_ref/λ)^α | `PlumeSource`, `plume_reflected_electron_rate` | Kirchhoff cavity identity: ε_pl = 1, F = 1, T_pl = T_wall makes emitted + reflected equal the blackbody signal to 10⁻⁹; zero when off; warm bias, larger for the ratio, fading for a wall hotter than the plume; soot slope scaling | `test_plume_cavity_identity`, `test_plume_term_off_and_sign` | Verified |
 | Optical constants (three material classes) | `MATERIALS` | illustrative class values | — | **Assumption** (coupon measurement required) |
 | AM1.5G solar spectrum, 25-point table | `solar_spectral_irradiance` | ASTM G173-03, ±10%, narrow bands smoothed | `test_solar_terms` (620 nm value) | **Assumption** (site/day irradiance required) |
 | Diffuse (Lambertian) reflection; smooth-surface Fresnel emissivity | model form | worst case for the angular collapse; real BRDFs lie between diffuse and specular | — | **Assumption** |
+| Plume as a gray or power-law-sloped body of uniform radiance; view factor F and glare coefficient g as free parameters | `PlumeSource` | plume band emissivity and geometry must come from plume pixels in the image and a view-factor model | — | **Assumption** |
 
 ## Modelling assumptions not covered by tests
 

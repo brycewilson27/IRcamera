@@ -23,7 +23,9 @@ from ircam.pyrometry import NotchFilter, RatioPyrometer
 from ircam.sensors import imx900_camera
 from ircam.surface import (
     MATERIALS,
+    PlumeSource,
     one_band_apparent_temperature,
+    plume_reflected_electron_rate,
     ratio_apparent_temperature,
     solar_reflected_electron_rate,
     specular_glint_ratio,
@@ -36,6 +38,7 @@ FIGURES, DOCS = ROOT / "figures", ROOT / "docs"
 # Palette (validated reference set, fixed order).
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
 MUTED, GRID = "#898781", "#e1e0d9"
+SEQ_BLUES = ("#86b6ef", "#3987e5", "#1c5cab", "#0d366b")  # sequential ramp, light -> dark
 
 CAM = imx900_camera(4.0, 0.85, "lcg")
 F620, F870 = NotchFilter(620e-9, 30e-9), NotchFilter(870e-9, 50e-9)
@@ -57,12 +60,79 @@ def style(ax, xlabel, ylabel, title=None):
         ax.set_title(title, fontsize=11)
 
 
-def bias_one(t, mat, tv, ts=0.0, sun=0.0, cal=0.0, resid=1.0):
-    return one_band_apparent_temperature(t, F620, CAM, mat, tv, ts, sun, cal, resid) - t
+def bias_one(t, mat, tv, ts=0.0, sun=0.0, cal=0.0, resid=1.0, plume=None):
+    return one_band_apparent_temperature(t, F620, CAM, mat, tv, ts, sun, cal, resid,
+                                         plume) - t
 
 
-def bias_two(t, mat, tv, ts=0.0, sun=0.0, cal=0.0, resid=1.0):
-    return ratio_apparent_temperature(t, PYRO, mat, tv, ts, sun, cal, resid) - t
+def bias_two(t, mat, tv, ts=0.0, sun=0.0, cal=0.0, resid=1.0, plume=None):
+    return ratio_apparent_temperature(t, PYRO, mat, tv, ts, sun, cal, resid, plume) - t
+
+
+def plume_fraction(filt, t_wall, tv, plume):
+    return (plume_reflected_electron_rate(filt, CAM, GRAPHITE, tv, plume)
+            / thermal_electron_rate(t_wall, filt, CAM, GRAPHITE, tv))
+
+
+def fig_plume_reflection():
+    """Bias vs wall temperature for several plume luminosities (eps_pl x F)."""
+    temps_c = np.linspace(1000, 3000, 41)
+    tv = math.radians(45)
+    levels = (0.01, 0.03, 0.1, 0.3)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+    for lvl, color in zip(levels, SEQ_BLUES):
+        plume = PlumeSource(2200 + 273.15, emissivity=lvl, view_factor=1.0)
+        one = [bias_one(tc + 273.15, GRAPHITE, tv, cal=tv, plume=plume) for tc in temps_c]
+        two = [bias_two(tc + 273.15, GRAPHITE, tv, cal=tv, plume=plume) for tc in temps_c]
+        ax1.plot(temps_c, one, color=color, lw=2, label=f"eps_pl x F = {lvl:g}")
+        ax2.plot(temps_c, two, color=color, lw=2, label=f"eps_pl x F = {lvl:g}")
+    for ax, title in ((ax1, "One band (620 nm)"), (ax2, "Two-band ratio")):
+        style(ax, "Wall temperature [C]",
+              "Apparent - true temperature [K]  (symlog)" if ax is ax1 else "", title)
+        ax.set_yscale("symlog", linthresh=1.0)
+        ax.set_ylim(-60, 3000)
+        ax.axhline(0, color=MUTED, lw=0.8)
+        ax.axvspan(1500, 3000, color="#eda100", alpha=0.07, lw=0)
+    ax1.legend(fontsize=8, frameon=False, title="gray plume at 2200 C", title_fontsize=8)
+    fig.suptitle("Plume light reflected by the wall (graphite-like, viewed at 45 deg)",
+                 fontsize=11)
+    fig.tight_layout()
+    fig.savefig(FIGURES / "plume_reflection.png", dpi=110)
+    plt.close(fig)
+
+
+def fig_additive_sources():
+    """Ratio bias from each additive source vs wall temperature."""
+    from ircam.pyrometry import exposure_for_well_fill
+    temps_c = np.linspace(1000, 3000, 41)
+    tv = ts = math.radians(45)
+    e1 = exposure_for_well_fill(3273.15, F620, CAM, 0.6)
+    e2 = exposure_for_well_fill(3273.15, F870, CAM, 0.6)
+    fig, ax = plt.subplots(figsize=(8.5, 4.8))
+    sun = [bias_two(tc + 273.15, GRAPHITE, tv, ts, 1.0, tv) for tc in temps_c]
+    faint = PlumeSource(2200 + 273.15, emissivity=0.01, view_factor=1.0)
+    sooty = PlumeSource(2200 + 273.15, emissivity=0.1, view_factor=1.0)
+    p_faint = [bias_two(tc + 273.15, GRAPHITE, tv, cal=tv, plume=faint) for tc in temps_c]
+    p_sooty = [bias_two(tc + 273.15, GRAPHITE, tv, cal=tv, plume=sooty) for tc in temps_c]
+    noise = [PYRO.sigma_T(tc + 273.15, e1, e2, binning=2, frames=8) for tc in temps_c]
+    ax.plot(temps_c, sun, color=BLUE, lw=2, label="full sun at 45 deg")
+    ax.plot(temps_c, p_faint, color=ORANGE, lw=2,
+            label="faint plume, eps_pl x F = 0.01 (2200 C)")
+    ax.plot(temps_c, p_sooty, color=AQUA, lw=2,
+            label="luminous plume, eps_pl x F = 0.1 (2200 C)")
+    ax.plot(temps_c, noise, color=MUTED, lw=1.5, ls=":",
+            label="shot noise, 2x2 x 8 frames (+/-)")
+    ax.axhline(0, color=MUTED, lw=0.8)
+    ax.axvspan(1500, 3000, color="#eda100", alpha=0.07, lw=0)
+    style(ax, "Wall temperature [C]",
+          "Two-band ratio bias, apparent - true [K]  (symlog)",
+          "Additive sources compared (graphite-like wall at 45 deg)")
+    ax.set_yscale("symlog", linthresh=1.0)
+    ax.set_ylim(-60, 3000)
+    ax.legend(fontsize=8, frameon=False)
+    fig.tight_layout()
+    fig.savefig(FIGURES / "additive_sources.png", dpi=110)
+    plt.close(fig)
 
 
 def fig_emissivity():
@@ -207,10 +277,41 @@ def main():
             f"{specular_glint_ratio(math.radians(deg), 870e-9, 3273.15, GRAPHITE):.1f}x |")
     add("")
 
+    add("## E. Plume reflection: graphite-like wall at 45 deg, gray plume at 2200 C, "
+        "eps_pl x F = 0.1 (e.g. eps_pl 0.5, F 0.2), no sun\n")
+    add("| Wall T | Plume / signal, 620 | Plume / signal, 870 | One band | Ratio | "
+        "Ratio, 70% in-frame subtraction |")
+    add("|---|---|---|---|---|---|")
+    tv = math.radians(45)
+    plume = PlumeSource(2200 + 273.15, emissivity=0.1, view_factor=1.0)
+    plume_sub = PlumeSource(2200 + 273.15, emissivity=0.1, view_factor=1.0, residual=0.3)
+    for tc in (1200, 1500, 2000, 2500, 3000):
+        t = tc + 273.15
+        add(f"| {tc} C | {100 * plume_fraction(F620, t, tv, plume):.1f} % | "
+            f"{100 * plume_fraction(F870, t, tv, plume):.1f} % | "
+            f"{bias_one(t, GRAPHITE, tv, cal=tv, plume=plume):+.0f} K | "
+            f"{bias_two(t, GRAPHITE, tv, cal=tv, plume=plume):+.0f} K | "
+            f"{bias_two(t, GRAPHITE, tv, cal=tv, plume=plume_sub):+.0f} K |")
+    add("")
+
+    add("## F. Ratio bias at a 1500 C wall vs plume luminosity and temperature "
+        "(graphite-like wall at 45 deg, gray plume)\n")
+    add("| eps_pl x F | Plume 1800 C | Plume 2200 C | Plume 2600 C |")
+    add("|---|---|---|---|")
+    for lvl in (0.003, 0.01, 0.03, 0.1, 0.3):
+        cells = []
+        for tp in (1800, 2200, 2600):
+            pl = PlumeSource(tp + 273.15, emissivity=lvl, view_factor=1.0)
+            cells.append(f"{bias_two(1773.15, GRAPHITE, tv, cal=tv, plume=pl):+.0f} K")
+        add(f"| {lvl:g} | " + " | ".join(cells) + " |")
+    add("")
+
     (DOCS / "computed_geometry_sun_results.md").write_text("\n".join(lines))
     fig_emissivity()
     fig_angle_error()
     fig_sun_vs_temperature()
+    fig_plume_reflection()
+    fig_additive_sources()
     print("\n".join(lines))
 
 

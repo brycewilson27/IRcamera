@@ -41,3 +41,23 @@
 | 30 deg | 8.8x | 4.6x |
 | 45 deg | 9.0x | 4.7x |
 | 70 deg | 11.0x | 5.3x |
+
+## E. Plume reflection: graphite-like wall at 45 deg, gray plume at 2200 C, eps_pl x F = 0.1 (e.g. eps_pl 0.5, F 0.2), no sun
+
+| Wall T | Plume / signal, 620 | Plume / signal, 870 | One band | Ratio | Ratio, 70% in-frame subtraction |
+|---|---|---|---|---|---|
+| 1200 C | 2652.4 % | 500.6 % | +393 K | +753 K | +582 K |
+| 1500 C | 185.4 % | 74.9 % | +155 K | +267 K | +121 K |
+| 2000 C | 10.5 % | 9.6 % | +22 K | +6 K | +2 K |
+| 2500 C | 1.7 % | 2.6 % | +5 K | -10 K | -3 K |
+| 3000 C | 0.5 % | 1.0 % | +2 K | -9 K | -3 K |
+
+## F. Ratio bias at a 1500 C wall vs plume luminosity and temperature (graphite-like wall at 45 deg, gray plume)
+
+| eps_pl x F | Plume 1800 C | Plume 2200 C | Plume 2600 C |
+|---|---|---|---|
+| 0.003 | +1 K | +15 K | +64 K |
+| 0.01 | +5 K | +48 K | +181 K |
+| 0.03 | +13 K | +121 K | +383 K |
+| 0.1 | +38 K | +267 K | +641 K |
+| 0.3 | +83 K | +411 K | +802 K |

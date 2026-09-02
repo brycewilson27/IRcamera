@@ -7,9 +7,13 @@ import pytest
 
 from ircam.pyrometry import NotchFilter, RatioPyrometer
 from ircam.sensors import imx900_camera
+from ircam.pyrometry import electron_rate
 from ircam.surface import (
     MATERIALS,
     OpticalConstants,
+    PlumeSource,
+    plume_reflected_electron_rate,
+    thermal_electron_rate,
     directional_emissivity,
     fresnel_reflectances,
     one_band_apparent_temperature,
@@ -101,3 +105,35 @@ def test_optical_constants_interpolate():
     mat = OpticalConstants("t", (600e-9, 800e-9), (2.0, 3.0), (1.0, 2.0))
     n, k = mat.nk(700e-9)
     assert float(n) == pytest.approx(2.5) and float(k) == pytest.approx(1.5)
+
+
+def test_plume_cavity_identity():
+    """A wall enclosed by a blackbody plume at its own temperature (eps_pl = 1,
+    F = 1) must look like a blackbody: emitted + reflected = eps + (1 - eps)."""
+    t = 2273.15
+    plume = PlumeSource(temperature=t, emissivity=1.0, view_factor=1.0)
+    for filt in (F620, F870):
+        total = (thermal_electron_rate(t, filt, CAM, GRAPHITE, 0.3)
+                 + plume_reflected_electron_rate(filt, CAM, GRAPHITE, 0.3, plume))
+        assert total == pytest.approx(electron_rate(t, filt, CAM), rel=1e-9)
+
+
+def test_plume_term_off_and_sign():
+    assert plume_reflected_electron_rate(F620, CAM, GRAPHITE, 0.5, None) == 0.0
+    assert plume_reflected_electron_rate(
+        F620, CAM, GRAPHITE, 0.5, PlumeSource(2473.15, emissivity=0.0)) == 0.0
+    t_true, tv = 1773.15, math.radians(45)
+    plume = PlumeSource(2473.15, emissivity=0.3, view_factor=0.2)
+    one = one_band_apparent_temperature(t_true, F620, CAM, GRAPHITE, tv, cal_theta=tv,
+                                        plume=plume) - t_true
+    two = ratio_apparent_temperature(t_true, PYRO, GRAPHITE, tv, cal_theta=tv,
+                                     plume=plume) - t_true
+    assert one > 50 and two > one          # warm bias, worse for the ratio
+    # Hotter wall than plume: the term fades.
+    hot = ratio_apparent_temperature(3273.15, PYRO, GRAPHITE, tv, cal_theta=tv,
+                                     plume=plume) - 3273.15
+    assert abs(hot) < 0.1 * two
+    # Soot-like spectral slope (alpha = 1) raises the 620 nm share.
+    sooty = PlumeSource(2473.15, emissivity=0.3, alpha=1.0, view_factor=0.2)
+    assert plume.band_emissivity(620e-9) == pytest.approx(0.3)
+    assert sooty.band_emissivity(620e-9) == pytest.approx(0.3 * 870 / 620)

@@ -5,7 +5,8 @@ Four stories:
   1. Notch spacing & width vs temperature sensitivity
   2. Why one calibrated notch is inaccurate under uncertain radiometry
   3. Temperature certainty vs scene temperature for the selected pair
-  4. Viewing angle (directional emissivity) and reflected sunlight
+  4. Viewing angle (directional emissivity), reflected sunlight and
+     plume light reflected by the wall
 Sensor: Sony IMX900 (2.25 um BSI stacked global shutter), tabulated QE and
 LCG/HCG gain modes sourced as documented in ircam/sensors.py.
 
@@ -37,8 +38,10 @@ from ircam.sensors import (
 from ircam.surface import (
     MATERIALS,
     OpticalConstants,
+    PlumeSource,
     RatioPyrometer,
     one_band_apparent_temperature,
+    plume_reflected_electron_rate,
     ratio_apparent_temperature,
     solar_reflected_electron_rate,
     specular_glint_ratio,
@@ -134,37 +137,46 @@ def _material(name, nk):
     return OpticalConstants("custom", (620e-9, 870e-9), (n1, n2), (k1, k2))
 
 
+def _plume(pp):
+    t_pl, eps, alpha, fview, glare, resid = pp
+    if eps <= 0.0:
+        return None
+    return PlumeSource(t_pl, eps, alpha, 870e-9, fview, glare, resid)
+
+
 @st.cache_data(show_spinner=False)
-def bias_vs_angle(mat_name, nk, t_k, theta_s_deg, sun, resid, l1, w1, l2, w2,
+def bias_vs_angle(mat_name, nk, t_k, theta_s_deg, sun, resid, pp, l1, w1, l2, w2,
                   f_number, tau, gain_mode, read_noise, well):
     cam = imx900_camera(f_number, tau, gain_mode, read_noise=read_noise,
                         well_capacity=well)
     mat = _material(mat_name, nk)
     f1, f2 = NotchFilter(l1, w1), NotchFilter(l2, w2)
     pyro = RatioPyrometer(f1, f2, cam)
+    plume = _plume(pp)
     angles = np.linspace(0, 88, 45)
     ts = math.radians(theta_s_deg)
     one = [one_band_apparent_temperature(t_k, f1, cam, mat, math.radians(a), ts, sun,
-                                         0.0, resid) - t_k for a in angles]
+                                         0.0, resid, plume) - t_k for a in angles]
     two = [ratio_apparent_temperature(t_k, pyro, mat, math.radians(a), ts, sun,
-                                      0.0, resid) - t_k for a in angles]
+                                      0.0, resid, plume) - t_k for a in angles]
     return angles, np.array(one), np.array(two)
 
 
 @st.cache_data(show_spinner=False)
-def bias_vs_temperature(mat_name, nk, theta_v_deg, theta_s_deg, sun, resid, l1, w1,
+def bias_vs_temperature(mat_name, nk, theta_v_deg, theta_s_deg, sun, resid, pp, l1, w1,
                         l2, w2, f_number, tau, gain_mode, read_noise, well):
     cam = imx900_camera(f_number, tau, gain_mode, read_noise=read_noise,
                         well_capacity=well)
     mat = _material(mat_name, nk)
     f1, f2 = NotchFilter(l1, w1), NotchFilter(l2, w2)
     pyro = RatioPyrometer(f1, f2, cam)
+    plume = _plume(pp)
     temps_c = np.linspace(1000, 3000, 41)
     tv, ts = math.radians(theta_v_deg), math.radians(theta_s_deg)
     one = [one_band_apparent_temperature(tc + 273.15, f1, cam, mat, tv, ts, sun, 0.0,
-                                         resid) - (tc + 273.15) for tc in temps_c]
+                                         resid, plume) - (tc + 273.15) for tc in temps_c]
     two = [ratio_apparent_temperature(tc + 273.15, pyro, mat, tv, ts, sun, 0.0,
-                                      resid) - (tc + 273.15) for tc in temps_c]
+                                      resid, plume) - (tc + 273.15) for tc in temps_c]
     return temps_c, np.array(one), np.array(two)
 
 
@@ -228,7 +240,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "1 - Notch spacing & width",
     "2 - One notch vs two: uncertain radiometry",
     "3 - Temperature certainty vs temperature",
-    "4 - Viewing angle & sunlight",
+    "4 - Angle, sunlight & plume reflection",
 ])
 
 # ============================================================ story 1
@@ -548,9 +560,9 @@ with tab3:
 
 # ============================================================ story 4
 with tab4:
-    st.subheader("Viewing angle and reflected sunlight")
+    st.subheader("Viewing angle, reflected sunlight and plume reflection")
     st.markdown(
-        "Two terms the plain radiometric chain leaves out. **Directional "
+        "Three terms the plain radiometric chain leaves out. **Directional "
         "emissivity** falls toward grazing angles (Fresnel), so a normal-"
         "incidence calibration reads a tilted surface cold: a multiplicative "
         "error that varies across the frame. The ratio cancels it exactly when "
@@ -558,7 +570,11 @@ with tab4:
         "**Reflected sunlight** is additive, hits the short band far harder than "
         "the long band, and propagates through lam_eq, so it biases the ratio "
         "*more* than a single band. A pre-ignition frame measures it directly "
-        "and can be subtracted."
+        "and can be subtracted. **Plume light reflected by the wall** is the "
+        "same kind of term but can be 10-100x larger for a luminous (soot or "
+        "particle) plume, and it exists only during the burn: it must be "
+        "estimated from plume pixels in the same frame and a view-factor "
+        "model, then subtracted."
     )
     g1, g2, g3, g4 = st.columns(4)
     mat_name = g1.selectbox("Surface optical constants",
@@ -571,6 +587,26 @@ with tab4:
                           key="teval4")
     resid_pct = h2.slider("Reflected-sun residual after pre-ignition subtraction [%]",
                           0, 100, 100, 5)
+    st.markdown("**Plume illumination of the wall**")
+    q1, q2, q3, q4, q5, q6 = st.columns(6)
+    plume_t_c = q1.slider("Plume temperature [C]", 1500, 2800, 2200, 50)
+    plume_eps = q2.slider("Plume band emissivity", 0.0, 1.0, 0.1, 0.01,
+                          help="~0.001-0.01 for a clean plume in the notches; "
+                               "0.1-0.9 for soot / Al2O3 laden plumes.")
+    plume_f = q3.slider("View factor (wall sees plume)", 0.0, 1.0, 0.2, 0.05,
+                        help="Cosine-weighted fraction of the wall element's "
+                             "hemisphere filled by plume.")
+    plume_alpha = q4.slider("Plume spectral slope alpha", 0.0, 1.5, 0.0, 0.25,
+                            help="eps_pl(lam) ~ lam^-alpha: 0 gray (particles), "
+                                 "~1 Rayleigh soot.")
+    plume_glare = q5.slider("Veiling glare coefficient", 0.0, 0.05, 0.0, 0.005,
+                            help="Lens veiling glare index x plume area fraction "
+                                 "in the field; reaches every pixel.")
+    plume_resid_pct = q6.slider("Plume residual after in-frame subtraction [%]",
+                                0, 100, 100, 5)
+    pp = (plume_t_c + 273.15, plume_eps, plume_alpha, plume_f, plume_glare,
+          plume_resid_pct / 100.0)
+    plume_src = _plume(pp)
     nk = (2.7, 1.4, 2.9, 1.6)
     if mat_name == "custom":
         k1, k2, k3, k4 = st.columns(4)
@@ -585,9 +621,13 @@ with tab4:
     f1, f2 = NotchFilter(L1, W1), NotchFilter(L2, W2)
     pyro4 = RatioPyrometer(f1, f2, CAM)
     one_now = one_band_apparent_temperature(t4, f1, CAM, material, tv, ts, sun, 0.0,
-                                            resid) - t4
+                                            resid, plume_src) - t4
     two_now = ratio_apparent_temperature(t4, pyro4, material, tv, ts, sun, 0.0,
-                                         resid) - t4
+                                         resid, plume_src) - t4
+    pfrac1 = (plume_reflected_electron_rate(f1, CAM, material, tv, plume_src)
+              / thermal_electron_rate(t4, f1, CAM, material, tv))
+    pfrac2 = (plume_reflected_electron_rate(f2, CAM, material, tv, plume_src)
+              / thermal_electron_rate(t4, f2, CAM, material, tv))
     frac1 = (resid * solar_reflected_electron_rate(f1, CAM, material, tv, ts, sun)
              / thermal_electron_rate(t4, f1, CAM, material, tv))
     frac2 = (resid * solar_reflected_electron_rate(f2, CAM, material, tv, ts, sun)
@@ -599,6 +639,10 @@ with tab4:
     m4[1].metric(f"Ratio bias @ {t_eval4_c} C", f"{two_now:+.0f} K")
     m4[2].metric("Reflected sun / signal", f"{100 * frac1:.1f} % / {100 * frac2:.1f} %",
                  help="short band / long band")
+    m4b = st.columns(4)
+    m4b[0].metric("Reflected plume / signal",
+                  f"{100 * pfrac1:.1f} % / {100 * pfrac2:.1f} %",
+                  help="short band / long band, after the in-frame subtraction residual")
     m4[3].metric("Specular glint / surface radiance",
                  f"{glint:,.0f}x" if glint >= 10 else f"{glint:.1f}x",
                  help="Radiance of the sun's specular image relative to the surface "
@@ -629,7 +673,7 @@ with tab4:
                               height=380), use_container_width=True)
     with cb:
         angles, one_a, two_a = bias_vs_angle(
-            mat_name, nk, t4, theta_s_deg, sun, resid, L1, W1, L2, W2, f_number,
+            mat_name, nk, t4, theta_s_deg, sun, resid, pp, L1, W1, L2, W2, f_number,
             TAU_EFF, gain_mode, read_noise, well)
         figa = go.Figure()
         figa.add_trace(go.Scatter(x=angles, y=one_a, name="one band (620 nm)",
@@ -645,7 +689,7 @@ with tab4:
                               height=380), use_container_width=True)
 
     temps4, one_t, two_t = bias_vs_temperature(
-        mat_name, nk, theta_v_deg, theta_s_deg, sun, resid, L1, W1, L2, W2, f_number,
+        mat_name, nk, theta_v_deg, theta_s_deg, sun, resid, pp, L1, W1, L2, W2, f_number,
         TAU_EFF, gain_mode, read_noise, well)
     figt = go.Figure()
     figt.add_trace(go.Scatter(x=temps4, y=one_t, name="one band (620 nm)",
@@ -663,7 +707,9 @@ with tab4:
         "Smooth-surface Fresnel emissivity with illustrative optical constants "
         "(rough surfaces are more Lambertian, so this is the worst case for the "
         "angular collapse); AM1.5G sunlight reflected diffusely (about 10% "
-        "uncertain); the specular glint is reported as a hazard ratio only."
+        "uncertain); plume light as a gray or soot-sloped body reflected "
+        "diffusely with a user-set view factor; the specular glint is reported "
+        "as a hazard ratio only."
     )
 
 st.caption(
