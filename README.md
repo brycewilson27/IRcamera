@@ -3,6 +3,22 @@
 Physics analysis of infrared camera requirements: a validated Python
 toolkit (`ircam`) plus a requirements-flowdown analysis built on it.
 
+## Interactive designer app
+
+`streamlit_app.py` is an interactive two-notch pyrometry designer on the
+Sony IMX900 sensor model: notch spacing/width vs temperature sensitivity,
+the one-notch radiometric-uncertainty story, and temperature certainty vs
+scene temperature for your chosen pair.
+
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+To deploy on Streamlit Community Cloud: push this repo to GitHub, then at
+share.streamlit.io create an app pointing at this repository/branch with
+main file `streamlit_app.py` (requirements.txt is picked up automatically).
+
 ## Start here
 
 **[docs/nozzle_pyrometry.md](docs/nozzle_pyrometry.md)** — the mission
