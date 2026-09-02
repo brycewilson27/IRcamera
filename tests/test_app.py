@@ -49,7 +49,7 @@ def test_streamlit_app_runs_clean():
     at = AppTest.from_file("../streamlit_app.py", default_timeout=120)
     at.run()
     assert not at.exception, [str(e) for e in at.exception]
-    # All three story tabs render.
-    assert len(at.tabs) == 3
+    # All four story tabs render.
+    assert len(at.tabs) == 4
     # Headline metrics exist (lam_eq caption + NEdT metrics in tab 3).
     assert len(at.metric) >= 4

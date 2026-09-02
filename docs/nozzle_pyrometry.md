@@ -198,6 +198,12 @@ covers 300–900 °C — a bolt-on, not a redesign.
   measured spectral response (filter × QE), not the centre-wavelength
   approximation — `ircam.pyrometry` computes with full band integrals for
   exactly this reason.
+* **Viewing angle and sunlight** are treated in
+  [`viewing_geometry_and_sun.md`](viewing_geometry_and_sun.md): directional
+  emissivity collapses past ~60° from the normal (mostly cancelled by the
+  ratio), reflected sun is additive and biases the ratio *more* than one
+  band below ~1500 °C (a pre-ignition frame subtracts it), and a specular
+  sun glint saturates the pixel outright.
 * **What the ratio does NOT cancel:** wavelength-*dependent* effects —
   chromatic transmission drift of a fouling window (mild between 620 and
   870 nm), differential plume scattering, non-gray ε. The third

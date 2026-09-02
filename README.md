@@ -28,6 +28,12 @@ notches, optimal notch placement and widths, dynamic range, and a
 recommended design. Computed tables in
 [docs/computed_nozzle_results.md](docs/computed_nozzle_results.md).
 
+**[docs/viewing_geometry_and_sun.md](docs/viewing_geometry_and_sun.md)** —
+the viewing-angle and reflected-sunlight error budget: directional
+emissivity (multiplicative, mostly cancelled by the ratio) and reflected
+sun (additive, amplified by the ratio), with the pre-ignition subtraction
+mitigation. Tab 4 of the app.
+
 **[docs/physics_analysis.md](docs/physics_analysis.md)** — the general
 framework:
 scene radiometry, band trade (MWIR vs LWIR), atmosphere, optics,
@@ -48,6 +54,8 @@ regenerated into [docs/computed_results.md](docs/computed_results.md).
 | `ircam.radiometry` | End-to-end photon-detector chain: electrons, noise, NETD, SNR |
 | `ircam.range_performance` | Johnson-criteria DRI: sampling- and contrast-limited ranges |
 | `ircam.pyrometry` | Visible/NIR ratio pyrometry: notch filters, silicon QE, NEdT, emissivity bias |
+| `ircam.sensors` | Sony IMX900 preset: tabulated QE, LCG/HCG gain modes, provenance |
+| `ircam.surface` | Fresnel directional emissivity, AM1.5G reflected sunlight, apparent-temperature inversions, glint hazard |
 
 ## Usage
 

@@ -8,8 +8,8 @@ second derivation route). "Derivation-consistent" means the formula is a
 standard definition or algebraic identity with no independent numerical
 reference in the suite. "Assumption" means a parameter value, not physics.
 
-Run: `pytest tests/` (38 tests). Test files: `test_physics.py`,
-`test_pyrometry.py`, `test_verification.py`, `test_app.py`.
+Run: `pytest tests/` (44 tests). Test files: `test_physics.py`,
+`test_pyrometry.py`, `test_verification.py`, `test_surface.py`, `test_app.py`.
 
 ## Constants
 
@@ -78,6 +78,18 @@ Run: `pytest tests/` (38 tests). Test files: `test_physics.py`,
 | QE absolute peak 0.868 | `IMX900_BASLER_EMVA_PEAK_QE` | Basler EMVA 1288, a2A2048-37gmPRO; the raw table peak 0.958 is flagged in the source repository as a probable normalised response | `test_imx900_qe_table` | **Assumption** (choice between two published figures; cancels in the saturation-capped regime) |
 | LCG 9458 e⁻ / 5.56 e⁻; HCG 2183 e⁻ / 1.39 e⁻ | `IMX900_GAIN_MODES` | FRAMOS EMVA 1288 (LCG); PTC measurement (HCG), via `framegen/sensors/presets/imx900.py` | `test_imx900_gain_modes` | Verified transcription |
 | 2 µs minimum exposure | `IMX900_SPECS["min_exposure"]` | typical global-shutter floor | — | **Assumption** |
+
+## Viewing geometry and sunlight (`ircam.surface`)
+
+| Formula | Implementation | Reference | Test | Status |
+|---|---|---|---|---|
+| Fresnel r_s, r_p with complex Snell; ε(θ) = 1 − (R_s + R_p)/2 | `fresnel_reflectances`, `directional_emissivity` | normal-incidence closed form 1 − ((n−1)² + k²)/((n+1)² + k²); R_p = 0 at Brewster's angle for k = 0; ε → 0 at grazing incidence; 0 ≤ ε ≤ 1 | `test_normal_incidence_closed_form`, `test_brewster_angle_for_lossless_dielectric`, `test_grazing_limit_and_energy_bounds` | Verified |
+| L_refl = (1 − ε(θ_v)) E_sun cos θ_s / π | `solar_reflected_electron_rate` | zero when shaded or sun behind the surface; warm bias sign | `test_solar_terms`, `test_one_band_round_trip_and_signs` | Verified (algebra, signs) |
+| One-band and ratio apparent temperature by exact inversion | `one_band_apparent_temperature`, `ratio_apparent_temperature` | round trip at the calibration angle; ratio bias exactly zero when both bands share optical constants; ratio sun bias > 2× one-band sun bias at 1500 °C; 90% subtraction scales the bias ~10× | `test_one_band_round_trip_and_signs`, `test_ratio_cancels_angular_factor_for_dielectric`, `test_sun_biases_ratio_more_than_one_band_at_1500c` | Verified |
+| Glint ratio (1 − ε) L_sun / (ε L_bb), L_sun = E_sun/Ω_sun | `specular_glint_ratio` | > 1 at 3000 °C | `test_solar_terms` | Verified (order of magnitude) |
+| Optical constants (three material classes) | `MATERIALS` | illustrative class values | — | **Assumption** (coupon measurement required) |
+| AM1.5G solar spectrum, 25-point table | `solar_spectral_irradiance` | ASTM G173-03, ±10%, narrow bands smoothed | `test_solar_terms` (620 nm value) | **Assumption** (site/day irradiance required) |
+| Diffuse (Lambertian) reflection; smooth-surface Fresnel emissivity | model form | worst case for the angular collapse; real BRDFs lie between diffuse and specular | — | **Assumption** |
 
 ## Modelling assumptions not covered by tests
 
