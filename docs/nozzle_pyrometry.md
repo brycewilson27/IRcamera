@@ -183,12 +183,28 @@ covers 300–900 °C — a bolt-on, not a redesign.
 
 ## 6. Implementation notes
 
-* **Architecture:** two synchronized IMX900 cameras behind a dichroic
-  beamsplitter (sharing one objective) is the precision option — each
-  band gets its own exposure/ND, and registration is fixed. A single
-  Bayer color camera behind a *dual-band* filter (620 → red pixels,
-  870 → all pixels, separable in post) is a compact alternative with a
-  cross-talk calibration burden. A filter wheel is not video-compatible.
+* **Architecture (chosen): two synchronized IMX900 cameras side by
+  side,** one notch filter, objective, exposure and ND each, on a common
+  hardware trigger. Each band is anti-saturated independently, which is
+  what every precision figure above assumes. The cost is parallax: a
+  pixel-to-pixel registration calibrated at range R is off by b·dz/R on
+  the surface for points a depth dz from that plane (b the baseline), and
+  where the surface has a temperature gradient the ratio amplifies the
+  resulting spot-temperature difference by λ₁/(λ₂−λ₁) ≈ 2.5 (map on the
+  short-band grid) or λ₂/(λ₂−λ₁) ≈ 3.5 (long-band grid). At a 60 mm
+  baseline, 10 m standoff and 0.3 m relief that is 1.8 mm on the nozzle,
+  about 4 pixels with a 50 mm lens, and about 22 K in a 5 K/mm gradient —
+  half the averaged 1500 °C noise floor — so register with a depth-aware
+  warp (nozzle geometry + camera pose) or per-frame feature matching
+  rather than one plane, and assign the map to the short-band grid. Tab 5
+  of the app budgets this (`ircam.optics.parallax_misregistration`,
+  `ircam.pyrometry.misregistration_gain`). Alternatives: the same two
+  cameras behind a dichroic beamsplitter sharing one objective (no
+  parallax, but a custom optical assembly); a single Bayer color camera
+  behind a *dual-band* filter (620 → red pixels, 870 → all pixels,
+  separable in post) is compact but shares one exposure between the bands
+  and carries a cross-talk calibration burden. A filter wheel is not
+  video-compatible.
 * **Calibration:** calibrate the *ratio* against a blackbody furnace or
   tungsten strip lamp (reachable to ~1500–1700 °C) and extrapolate to
   3000 °C on the Planck form — legitimate for the ratio because the shape
@@ -222,6 +238,6 @@ covers 300–900 °C — a bolt-on, not a redesign.
 | Is one calibrated notch enough? | No — every multiplicative unknown reads as temperature error (48 K per 10% at 3000 °C). The ratio is required. |
 | Are two notches + a Planck fit sound? | Yes — that *is* two-color ratio pyrometry; 2 unknowns, 2 measurements, exactly determined. A 3rd notch adds a consistency channel. |
 | Is there an ideal spacing? | Yes: σ_T ∝ λ_eq = λ₁λ₂/(λ₂−λ₁) — spread wide, but the short notch is capped by photon starvation at 1500 °C in a 3000 °C-scaled frame. Noise-optimal basin: 650–700 / 900–975 nm. |
-| Recommended | **620 ± 15 nm and 870 ± 25 nm**, OD4+ blocked, IMX900 in LCG mode; two synced cameras via dichroic; µs exposures + ~OD 1 ND; 2-frame HDR. |
+| Recommended | **620 ± 15 nm and 870 ± 25 nm**, OD4+ blocked, IMX900 in LCG mode; two synced cameras side by side (own exposure/ND each, map on the short-band grid, depth-aware registration); µs exposures + ~OD 1 ND; 2-frame HDR. |
 | Expected performance | 41 K @ 1500 °C, 8 K @ 2250 °C, 5 K @ 3000 °C (2×2 binning × 8 frames); ratio to ~900 °C and brightness mode to ~500–600 °C via HDR. |
 | 450/650 (initial proposal) | Works ≥ 2000 °C but starves (2 e⁻) at 1500 °C in a shared frame; 650 nm also collides with Hα for hydrogen-rich engines. |

@@ -7,6 +7,7 @@ Four stories:
   3. Temperature certainty vs scene temperature for the selected pair
   4. Viewing angle (directional emissivity), reflected sunlight and
      plume light reflected by the wall
+  5. Two cameras side by side: the parallax registration budget
 Sensor: selectable in the sidebar -- the tabulated Sony IMX900 curve, a set
 of approximate silicon classes from a three-parameter QE model, or a
 user-defined QE table (see ircam/sensors.py).
@@ -23,11 +24,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ircam.constants import C2
+from ircam.optics import Optics, parallax_disparity, parallax_misregistration
 from ircam.pyrometry import (
     NotchFilter,
     PyroCamera,
     electron_rate,
     equivalent_wavelength,
+    misregistration_gain,
 )
 from ircam.sensors import (
     IMX900_BASLER_EMVA_PEAK_QE,
@@ -316,11 +319,12 @@ st.caption(f"Engine-nozzle thermography, 1500-3000 C primary band. Sensor: "
            f"Selected pair: **{l1_nm} / {l2_nm} nm**, equivalent wavelength "
            f"lam_eq = {LAM_EQ * 1e9:.0f} nm.")
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1 - Notch spacing & width",
     "2 - One notch vs two: uncertain radiometry",
     "3 - Temperature certainty vs temperature",
     "4 - Angle, sunlight & plume reflection",
+    "5 - Two cameras side by side",
 ])
 
 # ============================================================ story 1
@@ -842,6 +846,133 @@ with tab4:
         "uncertain); plume light as a gray or soot-sloped body reflected "
         "diffusely with a user-set view factor; the specular glint is reported "
         "as a hazard ratio only."
+    )
+
+# ============================================================ story 5
+with tab5:
+    g_long = misregistration_gain(L1, L2, "long")
+    g_short = misregistration_gain(L1, L2, "short")
+    st.subheader("Two cameras side by side: each band keeps its own exposure, "
+                 "but the two views must be registered")
+    st.markdown(
+        "The architecture chosen for this design is **two synchronized cameras "
+        "side by side**, one notch filter, objective, exposure and ND each, on a "
+        "common hardware trigger. It keeps what every precision number in tabs "
+        "1-3 assumes: each band is anti-saturated on its own, so both wells are "
+        "filled at the hottest scene content. What it adds is **parallax**. The "
+        "cameras view the nozzle from points a baseline *b* apart, so a "
+        "pixel-to-pixel registration calibrated at one distance *R* is wrong for "
+        "surface points a depth *dz* nearer or farther: their two lines of sight "
+        "land *b dz / R* apart on the surface. A nozzle is not flat, so the error "
+        "varies across the frame. Where the surface has a temperature gradient "
+        "the two bands then view spots at different temperatures, and the ratio "
+        f"amplifies that difference by lam1/(lam2 - lam1) = {g_long:.2f} when "
+        f"the long band views the offset spot, or lam2/(lam2 - lam1) = "
+        f"{g_short:.2f} when the short band does. Assign the temperature map to "
+        "the **short-band camera's pixel grid** and the smaller gain applies."
+    )
+    p1, p2, p3, p4, p5 = st.columns(5)
+    baseline_mm = p1.slider("Camera baseline [mm]", 20, 500, 60, 5,
+                            help="Centre-to-centre spacing of the two objectives. "
+                                 "Two C-mount bodies side by side sit ~40-60 mm "
+                                 "apart at minimum.")
+    standoff_m = p2.slider("Standoff [m]", 1.0, 100.0, 10.0, 0.5,
+                           help="Distance to the plane where registration is "
+                                "calibrated.")
+    focal_mm = p3.slider("Focal length [mm]", 8, 300, 50, 1)
+    relief_m = p4.slider("Depth relief in view [m]", 0.05, 2.0, 0.3, 0.05,
+                         help="Depth range of the surface points in the frame, "
+                              "measured from the calibration plane. Roughly the "
+                              "nozzle radius for a side view of a bell.")
+    grad_k_mm = p5.slider("Surface gradient [K/mm]", 0.5, 20.0, 5.0, 0.5,
+                          help="Temperature gradient along the baseline direction "
+                               "(worst case). A gradient across the baseline "
+                               "produces no ratio error.")
+    b_m, f_m = baseline_mm * 1e-3, focal_mm * 1e-3
+    optics5 = Optics(focal_length=f_m, f_number=f_number)
+    gsd_mm = optics5.ground_sample_distance(PIXEL_PITCH, standoff_m) * 1e3
+    disp_px = parallax_disparity(b_m, standoff_m) / optics5.ifov(PIXEL_PITCH)
+    misreg_mm = parallax_misregistration(b_m, standoff_m, relief_m) * 1e3
+    misreg_px = optics5.parallax_misregistration_pixels(PIXEL_PITCH, b_m,
+                                                        standoff_m, relief_m)
+    dt_spot = grad_k_mm * misreg_mm
+    err_short_grid, err_long_grid = g_long * dt_spot, g_short * dt_spot
+    sig_1500 = float(sigma_ratio_vs_t(np.array([1500.0 + 273.15]), L1, W1, L2, W2,
+                                      CAM, T_MAX_K, fill, fps, binning=binning,
+                                      frames=frames)[0][0])
+    m5 = st.columns(4)
+    m5[0].metric("Pixel footprint on the nozzle", f"{gsd_mm:.2f} mm")
+    m5[1].metric("Fixed disparity at the calibration plane", f"{disp_px:,.0f} px",
+                 help="Removed by the registration calibration; it is the shift "
+                      "the warp between the two images has to carry.")
+    m5[2].metric("Residual misregistration across the relief",
+                 f"{misreg_mm:.2f} mm / {misreg_px:.1f} px",
+                 help="b dz / R on the surface, and in pixels at the far end of "
+                      "the relief.")
+    m5[3].metric(f"Temperature error at {grad_k_mm:g} K/mm", f"{err_short_grid:.0f} K",
+                 help=f"Map on the short-band grid (gain {g_long:.2f}); "
+                      f"{err_long_grid:.0f} K on the long-band grid (gain "
+                      f"{g_short:.2f}). NEdT at 1500 C with the sidebar averaging "
+                      f"is {sig_1500:.0f} K.")
+    if err_short_grid > sig_1500:
+        st.warning(
+            f"Registration error ({err_short_grid:.0f} K) exceeds the averaged "
+            f"1500 C noise floor ({sig_1500:.0f} K). Shorten the baseline, stand "
+            "off farther, or register with a depth-aware warp (nozzle geometry + "
+            "camera pose) or per-frame feature matching instead of one plane.")
+
+    r_grid = np.linspace(1.0, 100.0, 300)
+    c5a, c5b = st.columns(2)
+    with c5a:
+        figp = go.Figure()
+        for mult, dash, label in ((0.5, "dot", "half the baseline"),
+                                  (1.0, None, f"baseline {baseline_mm} mm"),
+                                  (2.0, "dash", "twice the baseline")):
+            figp.add_trace(go.Scatter(
+                x=r_grid,
+                y=optics5.parallax_misregistration_pixels(PIXEL_PITCH, mult * b_m,
+                                                          r_grid, relief_m),
+                name=label,
+                line=dict(color=BLUE, width=2.5 if mult == 1.0 else 1.5, dash=dash),
+                hovertemplate="%{x:.0f} m: %{y:.2f} px<extra></extra>"))
+        hline_log(figp, 1.0, "one pixel")
+        figp.add_vline(x=standoff_m, line=dict(color=MUTED, dash="dot", width=1))
+        st.plotly_chart(style(figp, "Standoff [m]",
+                              f"Misregistration across {relief_m:g} m relief [px]",
+                              logy=True, height=380), width="stretch")
+    with c5b:
+        mm_grid = parallax_misregistration(b_m, r_grid, relief_m) * 1e3
+        figg = go.Figure()
+        figg.add_trace(go.Scatter(
+            x=r_grid, y=g_long * grad_k_mm * mm_grid,
+            name=f"map on the short-band grid (gain {g_long:.2f})",
+            line=dict(color=BLUE, width=2),
+            hovertemplate="%{x:.0f} m: %{y:.0f} K<extra></extra>"))
+        figg.add_trace(go.Scatter(
+            x=r_grid, y=g_short * grad_k_mm * mm_grid,
+            name=f"map on the long-band grid (gain {g_short:.2f})",
+            line=dict(color=ORANGE, width=2),
+            hovertemplate="%{x:.0f} m: %{y:.0f} K<extra></extra>"))
+        hline_log(figg, sig_1500,
+                  f"NEdT at 1500 C, {binning}x{binning} x {frames} frames")
+        figg.add_vline(x=standoff_m, line=dict(color=MUTED, dash="dot", width=1))
+        st.plotly_chart(style(figg, "Standoff [m]",
+                              f"Temperature error at {grad_k_mm:g} K/mm [K]",
+                              logy=True, height=380), width="stretch")
+    st.caption(
+        "Pinhole geometry with both axes converged on the calibration plane and "
+        "registration by one fixed warp at that plane; the depth relief is the "
+        "departure from it and the gradient is taken along the baseline (worst "
+        "case). The error is independent of scene temperature to first order; "
+        "`ircam.pyrometry.misregistered_ratio_temperature_wien` is the exact "
+        "Wien-limit inversion. Mitigations: mount the cameras as close as the "
+        "bodies allow, stand off as far as the pixel footprint allows, register "
+        "with a depth-aware warp from the nozzle geometry and camera pose, or "
+        "match features in the thermal image itself each frame. Beyond parallax, "
+        "side by side also means two flat fields (a ratio flat field against one "
+        "uniform source), matched focal lengths (residual scale absorbed by the "
+        "warp) and a common hardware trigger so the microsecond exposures "
+        "overlap in time."
     )
 
 st.caption(

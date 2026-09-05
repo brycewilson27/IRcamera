@@ -60,3 +60,35 @@ class Optics:
         thermal imagers typically run Q ~ 0.5-1.2 (detector-limited).
         """
         return lam * self.f_number / pixel_pitch
+
+    def parallax_misregistration_pixels(self, pixel_pitch: float, baseline: float,
+                                        range_m, depth_relief) -> float:
+        """Registration error [pixels] between two cameras `baseline` apart,
+        registered at `range_m`, for a surface point `depth_relief` beyond it:
+        b dz / R divided by the pixel footprint at that point's own range.
+        Equals the disparity change b/R - b/(R + dz) divided by the IFOV."""
+        return (parallax_misregistration(baseline, range_m, depth_relief)
+                / self.ground_sample_distance(pixel_pitch, range_m + depth_relief))
+
+
+# ---------------------------------------------------------------- two cameras
+# Two cameras side by side, a baseline b apart, viewing the same target at
+# range R with their axes converged on it. Registration between the two
+# images is calibrated (one warp) at that reference depth; a surface point
+# dz beyond the plane is seen along lines of sight that have separated by
+# b dz / R on the target (similar triangles: the two rays cross at the
+# reference plane and diverge at the baseline's angular rate b/R beyond it).
+# Pinhole geometry; independent of focal length until converted to pixels.
+
+
+def parallax_disparity(baseline: float, range_m):
+    """Angular disparity b/R between the two cameras' lines of sight to a
+    point at range R [rad]. Calibrated out at the reference depth."""
+    return baseline / range_m
+
+
+def parallax_misregistration(baseline: float, range_m, depth_relief):
+    """Lateral offset on the target between the two cameras' registered
+    lines of sight, for a surface point `depth_relief` beyond (negative:
+    before) the reference plane at `range_m` [m]: b dz / R."""
+    return baseline * depth_relief / range_m

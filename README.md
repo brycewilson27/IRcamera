@@ -15,7 +15,8 @@ silicon sensor classes, a three-parameter QE model, or your own table),
 then explore notch spacing/width vs temperature sensitivity (either notch
 can be moved with the other held), the one-notch radiometric-uncertainty
 story, temperature certainty vs scene temperature for the selected pair,
-and the angle / sunlight / plume error budget.
+the angle / sunlight / plume error budget, and the parallax registration
+budget for the chosen architecture of two cameras side by side.
 
 ```bash
 pip install -r requirements.txt
@@ -56,7 +57,7 @@ regenerated into [docs/computed_results.md](docs/computed_results.md).
 | `ircam.planck` | Planck law, band integrals, thermal derivatives (analytic dL/dT), photon radiance |
 | `ircam.bands` | SWIR / MWIR / LWIR band definitions |
 | `ircam.atmosphere` | Beer–Lambert band-averaged path transmission |
-| `ircam.optics` | F#, étendue, diffraction, IFOV/FOV, sampling Q |
+| `ircam.optics` | F#, étendue, diffraction, IFOV/FOV, sampling Q, two-camera parallax |
 | `ircam.detector` | FPA description, Lloyd D\*-NETD, BLIP D\* |
 | `ircam.radiometry` | End-to-end photon-detector chain: electrons, noise, NETD, SNR |
 | `ircam.range_performance` | Johnson-criteria DRI: sampling- and contrast-limited ranges |

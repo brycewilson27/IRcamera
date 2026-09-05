@@ -55,6 +55,8 @@ __all__ = [
     "single_band_temperature_error",
     "ratio_temperature_error_wien",
     "equivalent_wavelength",
+    "misregistered_ratio_temperature_wien",
+    "misregistration_gain",
     "PLUME_EMISSION_LINES",
 ]
 
@@ -174,6 +176,36 @@ def ratio_temperature_error_wien(temperature: float, lam1: float, lam2: float,
         * relative_ratio_error
 
 
+def misregistered_ratio_temperature_wien(t_short, t_long, lam1: float, lam2: float):
+    """Temperature a ratio pyrometer reports when its short band views a spot
+    at `t_short` and its long band a spot at `t_long` (Wien limit) [K].
+
+    Inverting ln R = const - c2/(lam1 T_s) + c2/(lam2 T_l) on the gray-body
+    law gives 1/T = [lam2/T_s - lam1/T_l] / (lam2 - lam1): the two views
+    enter with weights lam2/(lam2 - lam1) and -lam1/(lam2 - lam1), which sum
+    to one, so a spot-temperature difference dT between the bands (imperfect
+    registration in a surface gradient) is amplified to lam2/(lam2 - lam1) dT
+    when the short band views the offset spot and lam1/(lam2 - lam1) dT when
+    the long band does. Independent of the bandpass shape in this limit.
+    """
+    t_short = np.asarray(t_short, dtype=float)
+    t_long = np.asarray(t_long, dtype=float)
+    inv = (lam2 / t_short - lam1 / t_long) / (lam2 - lam1)
+    out = 1.0 / inv
+    return out.item() if np.ndim(out) == 0 else out
+
+
+def misregistration_gain(lam1: float, lam2: float, offset_band: str = "long") -> float:
+    """Reported-temperature error per kelvin of spot-temperature difference
+    between the two bands' lines of sight (Wien limit): lam1/(lam2 - lam1)
+    when the long band views the offset spot, lam2/(lam2 - lam1) when the
+    short band does. Map the temperature onto the short band's pixel grid and
+    the smaller gain applies."""
+    if offset_band not in ("long", "short"):
+        raise ValueError("offset_band must be 'long' or 'short'")
+    return (lam1 if offset_band == "long" else lam2) / (lam2 - lam1)
+
+
 @dataclass(frozen=True)
 class RatioPyrometer:
     """Two-band ratio pyrometer: short-wavelength and long-wavelength notches."""
@@ -224,6 +256,15 @@ class RatioPyrometer:
             var = n_e + n_avg * self.camera.read_noise**2
             rel_var += var / n_e**2
         return np.sqrt(rel_var) / abs(self.dlnratio_dT(temperature))
+
+    def misregistered_temperature(self, t_short: float, t_long: float) -> float:
+        """Reported temperature [K] when the short band views a spot at
+        `t_short` and the long band a spot at `t_long` (full band integrals,
+        exact inversion); the Wien-limit form is
+        `misregistered_ratio_temperature_wien`."""
+        measured = (electron_rate(t_short, self.filter_short, self.camera)
+                    / electron_rate(t_long, self.filter_long, self.camera))
+        return self.temperature_from_ratio(measured)
 
     def emissivity_bias(self, temperature: float, eps_ratio: float) -> float:
         """Temperature bias [K] if the true eps_short/eps_long is `eps_ratio`

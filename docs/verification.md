@@ -8,7 +8,7 @@ second derivation route). "Derivation-consistent" means the formula is a
 standard definition or algebraic identity with no independent numerical
 reference in the suite. "Assumption" means a parameter value, not physics.
 
-Run: `pytest tests/` (53 tests). Test files: `test_physics.py`,
+Run: `pytest tests/` (55 tests). Test files: `test_physics.py`,
 `test_pyrometry.py`, `test_verification.py`, `test_surface.py`, `test_sensors.py`,
 `test_app.py`.
 
@@ -40,6 +40,7 @@ Run: `pytest tests/` (53 tests). Test files: `test_physics.py`,
 | Incoherent cutoff 1/(λF) | `Optics.diffraction_cutoff` | standard result | — | Derivation-consistent |
 | IFOV = p/f, FOV = 2 atan(Np/2f), GSD = IFOV·R | `Optics.ifov`, `field_of_view`, `ground_sample_distance` | geometry | `test_ifov_and_fov` | Verified |
 | Q = λF/p | `Optics.q_parameter` | definition | — | Derivation-consistent |
+| Two cameras side by side: disparity b/R; misregistration b·dz/R on the target, ÷ GSD(R+dz) in pixels | `parallax_disparity`, `parallax_misregistration`, `Optics.parallax_misregistration_pixels` | similar triangles; pixel form equals [b/R − b/(R+dz)]/IFOV; linear in b and dz, ≈1/R² in range | `test_parallax_geometry` | Verified (geometry) |
 
 ## Detectors and sensitivity (`ircam.detector`, `ircam.radiometry`)
 
@@ -67,6 +68,7 @@ Run: `pytest tests/` (53 tests). Test files: `test_physics.py`,
 | R(T) monotonic; T(R) inversion | `temperature_from_ratio` | round trip to 0.01 K | `test_ratio_monotonic_and_round_trip` | Verified |
 | σ_T = (λ_eq T²/c₂)·σ_R/R | `sigma_T`, `ratio_temperature_error_wien` | numeric shot-noise propagation with read noise = 0, 3%; √frames averaging | `test_sigma_t_consistent_with_wien_formula` | Verified |
 | Gray-assumption bias ΔT ≈ T²(λ_eq/c₂) ln(ε₁/ε₂) | `emissivity_bias` (exact inversion) | Wien magnitude and sign | `test_emissivity_bias_sign_and_wien_magnitude` | Verified |
+| Misregistered ratio (bands view spots at T_s, T_l): 1/T = [λ₂/T_s − λ₁/T_l]/(λ₂−λ₁); error gains λ₂/(λ₂−λ₁) (short band offset), λ₁/(λ₂−λ₁) (long band offset) | `misregistered_ratio_temperature_wien`, `misregistration_gain`, `RatioPyrometer.misregistered_temperature` (full integrals) | exact inversion with full band integrals to 5%; gains differ by exactly 1; signs; monotone in the offset | `test_misregistered_ratio_wien_vs_full_integrals` | Verified |
 | Single-band error dT = (λT²/c₂)·dS/S | `single_band_temperature_error` | classic 650 nm / 3273 K / 10% → 48 K; identity with the ratio law at λ = λ_eq | `test_single_band_error_formula`, `test_error_laws_reduce_consistently` | Verified |
 | N_e = A Ω τ ∫ QE·F·ε·L_q dλ | `electron_rate` | exposure-for-fill round trip; µs exposures at 3000 °C | `test_exposure_for_well_fill` | Verified (algebra) |
 | Plume emission line list | `PLUME_EMISSION_LINES` | standard line wavelengths (Na D, Hα, K, Li, CH, C₂ Swan, H₂O bands) | — | Reference data, not tested |

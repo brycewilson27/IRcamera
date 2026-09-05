@@ -49,8 +49,8 @@ def test_streamlit_app_runs_clean():
     at = AppTest.from_file("../streamlit_app.py", default_timeout=120)
     at.run()
     assert not at.exception, [str(e) for e in at.exception]
-    # All four story tabs render.
-    assert len(at.tabs) == 4
+    # All five story tabs render.
+    assert len(at.tabs) == 5
     # Headline metrics exist (lam_eq caption + NEdT metrics in tab 3).
     assert len(at.metric) >= 4
 
@@ -64,4 +64,4 @@ def test_streamlit_app_other_sensors_run_clean():
         at.sidebar.selectbox[0].select(key).run()
         assert at.sidebar.selectbox[0].value == key
         assert not at.exception, [str(e) for e in at.exception]
-        assert len(at.tabs) == 4 and len(at.metric) >= 4
+        assert len(at.tabs) == 5 and len(at.metric) >= 4

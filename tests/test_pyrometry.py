@@ -13,6 +13,8 @@ from ircam.pyrometry import (
     electron_rate,
     equivalent_wavelength,
     exposure_for_well_fill,
+    misregistered_ratio_temperature_wien,
+    misregistration_gain,
     ratio_temperature_error_wien,
     silicon_qe,
     single_band_temperature_error,
@@ -96,3 +98,36 @@ def test_silicon_qe_range():
     assert silicon_qe(550e-9) == pytest.approx(0.75)
     assert silicon_qe(1200e-9) == 0.0
     assert silicon_qe(300e-9) == 0.0
+
+
+def test_misregistered_ratio_wien_vs_full_integrals(pyrometer):
+    """Two cameras registered imperfectly: the bands view spots dT apart.
+    Wien closed form 1/T = [lam2/T_s - lam1/T_l]/(lam2 - lam1) against the
+    exact inversion with full band integrals; gains lam2/(lam2 - lam1) and
+    lam1/(lam2 - lam1) for the short- and long-band offsets."""
+    lam1, lam2 = 620e-9, 870e-9
+    t, d = 1500.0 + 273.15, 10.0
+    assert misregistered_ratio_temperature_wien(t, t, lam1, lam2) == pytest.approx(t)
+    assert pyrometer.misregistered_temperature(t, t) == pytest.approx(t, abs=0.02)
+    g_long = misregistration_gain(lam1, lam2, "long")
+    g_short = misregistration_gain(lam1, lam2, "short")
+    assert g_long == pytest.approx(620.0 / 250.0)
+    assert g_short == pytest.approx(870.0 / 250.0)
+    assert g_short - g_long == pytest.approx(1.0)   # the weights sum to one
+    with pytest.raises(ValueError):
+        misregistration_gain(lam1, lam2, "middle")
+    # Long band views the hotter spot -> reported colder by ~g_long * d.
+    wien = misregistered_ratio_temperature_wien(t, t + d, lam1, lam2) - t
+    full = pyrometer.misregistered_temperature(t, t + d) - t
+    assert wien < 0 and full < 0
+    assert wien == pytest.approx(-g_long * d, rel=0.03)
+    assert full == pytest.approx(wien, rel=0.05)
+    # Short band views the hotter spot -> reported hotter by ~g_short * d.
+    wien = misregistered_ratio_temperature_wien(t + d, t, lam1, lam2) - t
+    full = pyrometer.misregistered_temperature(t + d, t) - t
+    assert wien > 0 and full > 0
+    assert wien == pytest.approx(g_short * d, rel=0.03)
+    assert full == pytest.approx(wien, rel=0.05)
+    # Vectorised over an array of long-band temperatures.
+    arr = misregistered_ratio_temperature_wien(t, t + np.array([0.0, d, 2 * d]), lam1, lam2)
+    assert arr.shape == (3,) and np.all(np.diff(arr) < 0)

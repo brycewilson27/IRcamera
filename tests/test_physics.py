@@ -22,6 +22,7 @@ from ircam import (
     netd_from_dstar,
     planck,
 )
+from ircam.optics import parallax_disparity, parallax_misregistration
 from ircam.constants import C, C2, H, SIGMA
 from ircam.range_performance import (
     JOHNSON_N50,
@@ -125,6 +126,28 @@ def test_ifov_and_fov():
     assert optics.ifov(12e-6) == pytest.approx(300e-6)  # 0.3 mrad
     fov = optics.field_of_view(640, 12e-6)
     assert fov == pytest.approx(2.0 * math.atan(640 * 12e-6 / (2 * 0.040)))
+
+
+def test_parallax_geometry():
+    """Two cameras side by side: b dz / R on the target; the pixel form equals
+    the disparity change b/R - b/(R + dz) divided by the IFOV."""
+    b, r, dz = 0.060, 10.0, 0.30
+    assert parallax_disparity(b, r) == pytest.approx(6e-3)
+    assert parallax_misregistration(b, r, dz) == pytest.approx(1.8e-3)
+    assert parallax_misregistration(b, r, 0.0) == 0.0
+    optics = Optics(focal_length=0.050, f_number=4.0)
+    px = optics.parallax_misregistration_pixels(2.25e-6, b, r, dz)
+    expected = (parallax_disparity(b, r) - parallax_disparity(b, r + dz)) \
+        / optics.ifov(2.25e-6)
+    assert px == pytest.approx(expected)
+    assert px == pytest.approx(3.88, rel=1e-2)
+    # Linear in baseline and relief, close to 1/R^2 in range.
+    assert optics.parallax_misregistration_pixels(2.25e-6, 2 * b, r, dz) \
+        == pytest.approx(2 * px)
+    assert optics.parallax_misregistration_pixels(2.25e-6, b, r, 2 * dz) \
+        == pytest.approx(2 * px, rel=0.03)
+    far = optics.parallax_misregistration_pixels(2.25e-6, b, 2 * r, dz)
+    assert 0.24 < far / px < 0.26
 
 
 # ------------------------------------------------------------- NETD scaling
