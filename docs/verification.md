@@ -8,8 +8,9 @@ second derivation route). "Derivation-consistent" means the formula is a
 standard definition or algebraic identity with no independent numerical
 reference in the suite. "Assumption" means a parameter value, not physics.
 
-Run: `pytest tests/` (46 tests). Test files: `test_physics.py`,
-`test_pyrometry.py`, `test_verification.py`, `test_surface.py`, `test_app.py`.
+Run: `pytest tests/` (53 tests). Test files: `test_physics.py`,
+`test_pyrometry.py`, `test_verification.py`, `test_surface.py`, `test_sensors.py`,
+`test_app.py`.
 
 ## Constants
 
@@ -78,6 +79,11 @@ Run: `pytest tests/` (46 tests). Test files: `test_physics.py`,
 | QE absolute peak 0.868 | `IMX900_BASLER_EMVA_PEAK_QE` | Basler EMVA 1288, a2A2048-37gmPRO; the raw table peak 0.958 is flagged in the source repository as a probable normalised response | `test_imx900_qe_table` | **Assumption** (choice between two published figures; cancels in the saturation-capped regime) |
 | LCG 9458 e⁻ / 5.56 e⁻; HCG 2183 e⁻ / 1.39 e⁻ | `IMX900_GAIN_MODES` | FRAMOS EMVA 1288 (LCG); PTC measurement (HCG), via `framegen/sensors/presets/imx900.py` | `test_imx900_gain_modes` | Verified transcription |
 | 2 µs minimum exposure | `IMX900_SPECS["min_exposure"]` | typical global-shutter floor | — | **Assumption** |
+| c-Si absorption coefficient α(λ), 40 points | `silicon_absorption_coefficient` | Green (2008) table, rounded; log-linear interpolation; anchors 4.14×10³ cm⁻¹ at 600 nm, 64 cm⁻¹ at 1000 nm | `test_silicon_absorption_table` | Reference data (±10%) |
+| Parametric QE = A[1 − e^{−α d}] s(λ), peak-normalised | `parametric_silicon_qe` | knob behaviour (peak; depth sets the NIR tail; blue edge sets the roll-off); with the IMX900's peak and d = 10 µm it follows the tabulated IMX900 curve to within 0.1 in QE over 450–950 nm | `test_parametric_qe_knobs`, `test_parametric_model_brackets_imx900_shape` | **Assumption** (class model for bracketing a sensor choice, not a device measurement) |
+| Approximate presets: FSI 3.45 µm, BSI 2.74 µm, NIR-enhanced 2.9 µm, large-pixel 5.86 µm; ideal QE = 1 | `SENSOR_PRESETS` | typical published pitch / full-well / read-noise values; QE from the parametric model | `test_presets_are_physical` | **Assumption** (replace with the chosen sensor's datasheet) |
+| User QE table: linear interpolation, zero outside | `tabulated_qe`, `qe_from_spec`, `camera_from_spec` | interpolation midpoint, edge behaviour, spec round trips | `test_tabulated_qe_and_specs` | Verified (algebra) |
+| QE level cancels in the saturation-capped regime | `camera_from_spec` + `electron_rate` | identical electron counts at 1500 °C for peak QE 0.4 and 0.8 with the exposure pinned by a 3000 °C pixel; exposure halves | `test_qe_level_cancels_when_saturation_capped` | Verified |
 
 ## Viewing geometry and sunlight (`ircam.surface`)
 

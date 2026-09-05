@@ -5,10 +5,13 @@ toolkit (`ircam`) plus a requirements-flowdown analysis built on it.
 
 ## Interactive designer app
 
-`streamlit_app.py` is an interactive two-notch pyrometry designer on the
-Sony IMX900 sensor model: notch spacing/width vs temperature sensitivity,
-the one-notch radiometric-uncertainty story, and temperature certainty vs
-scene temperature for the selected pair.
+`streamlit_app.py` is an interactive two-notch pyrometry designer. Pick a
+sensor QE curve in the sidebar (the tabulated Sony IMX900, approximate
+silicon sensor classes, a three-parameter QE model, or your own table),
+then explore notch spacing/width vs temperature sensitivity (either notch
+can be moved with the other held), the one-notch radiometric-uncertainty
+story, temperature certainty vs scene temperature for the selected pair,
+and the angle / sunlight / plume error budget.
 
 ```bash
 pip install -r requirements.txt
@@ -54,7 +57,7 @@ regenerated into [docs/computed_results.md](docs/computed_results.md).
 | `ircam.radiometry` | End-to-end photon-detector chain: electrons, noise, NETD, SNR |
 | `ircam.range_performance` | Johnson-criteria DRI: sampling- and contrast-limited ranges |
 | `ircam.pyrometry` | Visible/NIR ratio pyrometry: notch filters, silicon QE, NEdT, emissivity bias |
-| `ircam.sensors` | Sony IMX900 preset: tabulated QE, LCG/HCG gain modes, provenance |
+| `ircam.sensors` | Sensor presets: tabulated Sony IMX900 QE and gain modes; approximate silicon QE classes from a c-Si absorption model; user-defined QE tables |
 | `ircam.surface` | Fresnel directional emissivity, AM1.5G reflected sunlight, plume reflection and glare, apparent-temperature inversions, glint hazard |
 
 ## Usage

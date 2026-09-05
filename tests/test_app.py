@@ -53,3 +53,15 @@ def test_streamlit_app_runs_clean():
     assert len(at.tabs) == 4
     # Headline metrics exist (lam_eq caption + NEdT metrics in tab 3).
     assert len(at.metric) >= 4
+
+
+def test_streamlit_app_other_sensors_run_clean():
+    at = AppTest.from_file("../streamlit_app.py", default_timeout=120)
+    at.run()
+    assert at.sidebar.selectbox[0].value == "imx900"
+    for key in ("parametric", "table", "large_5p86", "ideal"):
+        # Re-fetch the widget each time: element handles go stale after a rerun.
+        at.sidebar.selectbox[0].select(key).run()
+        assert at.sidebar.selectbox[0].value == key
+        assert not at.exception, [str(e) for e in at.exception]
+        assert len(at.tabs) == 4 and len(at.metric) >= 4

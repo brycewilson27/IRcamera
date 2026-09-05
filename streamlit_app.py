@@ -7,8 +7,9 @@ Four stories:
   3. Temperature certainty vs scene temperature for the selected pair
   4. Viewing angle (directional emissivity), reflected sunlight and
      plume light reflected by the wall
-Sensor: Sony IMX900 (2.25 um BSI stacked global shutter), tabulated QE and
-LCG/HCG gain modes sourced as documented in ircam/sensors.py.
+Sensor: selectable in the sidebar -- the tabulated Sony IMX900 curve, a set
+of approximate silicon classes from a three-parameter QE model, or a
+user-defined QE table (see ircam/sensors.py).
 
 Run locally:   streamlit run streamlit_app.py
 Deploy:        push to GitHub, point Streamlit Community Cloud at this file.
@@ -17,6 +18,7 @@ Deploy:        push to GitHub, point Streamlit Community Cloud at this file.
 import math
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -32,8 +34,9 @@ from ircam.sensors import (
     IMX900_GAIN_MODES,
     IMX900_QE_TABLE_PEAK,
     IMX900_SPECS,
-    imx900_camera,
-    imx900_qe,
+    SENSOR_PRESETS,
+    camera_from_spec,
+    qe_from_spec,
 )
 from ircam.surface import (
     MATERIALS,
@@ -114,10 +117,10 @@ def sigma_ratio_vs_t(temps_k, l1, w1, l2, w2, cam, t_max_k, fill, fps,
 
 
 @st.cache_data(show_spinner="Computing notch-pair map...")
-def pair_map(t_eval_k, f_number, tau, read_noise, well, t_max_k, fill, fps):
+def pair_map(t_eval_k, qe_spec, pixel_pitch, f_number, tau, read_noise, well,
+             t_max_k, fill, fps):
     """Worst-case NEdT over a (lambda1, lambda2) grid."""
-    cam = imx900_camera(f_number, tau, read_noise=read_noise,
-                        well_capacity=well)
+    cam = camera_from_spec(qe_spec, pixel_pitch, f_number, tau, read_noise, well)
     l1_grid = np.linspace(420e-9, 760e-9, 35)
     l2_grid = np.linspace(700e-9, 975e-9, 29)
     z = np.full((len(l2_grid), len(l1_grid)), np.nan)
@@ -146,9 +149,8 @@ def _plume(pp):
 
 @st.cache_data(show_spinner=False)
 def bias_vs_angle(mat_name, nk, t_k, theta_s_deg, sun, resid, pp, l1, w1, l2, w2,
-                  f_number, tau, gain_mode, read_noise, well):
-    cam = imx900_camera(f_number, tau, gain_mode, read_noise=read_noise,
-                        well_capacity=well)
+                  f_number, tau, qe_spec, pixel_pitch, read_noise, well):
+    cam = camera_from_spec(qe_spec, pixel_pitch, f_number, tau, read_noise, well)
     mat = _material(mat_name, nk)
     f1, f2 = NotchFilter(l1, w1), NotchFilter(l2, w2)
     pyro = RatioPyrometer(f1, f2, cam)
@@ -164,9 +166,8 @@ def bias_vs_angle(mat_name, nk, t_k, theta_s_deg, sun, resid, pp, l1, w1, l2, w2
 
 @st.cache_data(show_spinner=False)
 def bias_vs_temperature(mat_name, nk, theta_v_deg, theta_s_deg, sun, resid, pp, l1, w1,
-                        l2, w2, f_number, tau, gain_mode, read_noise, well):
-    cam = imx900_camera(f_number, tau, gain_mode, read_noise=read_noise,
-                        well_capacity=well)
+                        l2, w2, f_number, tau, qe_spec, pixel_pitch, read_noise, well):
+    cam = camera_from_spec(qe_spec, pixel_pitch, f_number, tau, read_noise, well)
     mat = _material(mat_name, nk)
     f1, f2 = NotchFilter(l1, w1), NotchFilter(l2, w2)
     pyro = RatioPyrometer(f1, f2, cam)
@@ -181,6 +182,100 @@ def bias_vs_temperature(mat_name, nk, theta_v_deg, theta_s_deg, sun, resid, pp, 
 
 
 # ---------------------------------------------------------------- sidebar
+SENSOR_CHOICES = {key: p.name for key, p in SENSOR_PRESETS.items()}
+SENSOR_CHOICES["parametric"] = "Define by parameters"
+SENSOR_CHOICES["table"] = "Define by QE table"
+
+with st.sidebar.expander("Sensor & QE curve", expanded=True):
+    sensor_key = st.selectbox(
+        "Sensor / QE curve", list(SENSOR_CHOICES),
+        format_func=lambda k: SENSOR_CHOICES[k],
+        help="Only the IMX900 curve is a tabulated measurement. The other "
+             "presets are approximate silicon classes from a three-parameter "
+             "model (peak QE, effective absorption depth, blue edge). Use them "
+             "to bracket a sensor you have not chosen yet, or define your own.")
+    gain_mode = "lcg"
+    if sensor_key == "imx900":
+        preset = SENSOR_PRESETS["imx900"]
+        gain_mode = st.radio(
+            "Conversion-gain mode", ["lcg", "hcg"], horizontal=True,
+            format_func=lambda m: {"lcg": "LCG (large well)",
+                                   "hcg": "HCG (low noise)"}[m],
+            help="LCG: FRAMOS EMVA 1288, 9458 e- well / 5.56 e- read. "
+                 "HCG: PTC-measured, 2183 e- well / 1.39 e- read. A scene with "
+                 "3000 C content is well-limited, so LCG is the default.")
+        mode = IMX900_GAIN_MODES[gain_mode]
+        default_read, default_well = mode["read_noise"], mode["well_capacity"]
+        QE_SPEC = ("preset", "imx900")
+        SENSOR_NOTE = preset.provenance
+    elif sensor_key == "parametric":
+        preset = SENSOR_PRESETS["bsi_2p74"]
+        peak_qe = st.slider("Peak QE", 0.30, 1.00, 0.80, 0.01)
+        depth_um = st.slider(
+            "Effective absorption depth [um]", 2.0, 25.0, 8.0, 0.5,
+            help="Photodiode thickness times any light-trapping path gain. "
+                 "Silicon absorbs weakly past 800 nm, so this sets how much QE "
+                 "survives at the long notch (FSI ~4-5 um, BSI ~10 um, "
+                 "NIR-enhanced ~15+ um).")
+        blue_edge_nm = st.slider(
+            "Blue edge [nm]", 350, 480, 400, 5,
+            help="Centre of the short-wavelength roll-off: front-side layers "
+                 "absorb blue on FSI sensors (~430 nm); BSI rolls off later "
+                 "(~360 nm).")
+        default_read, default_well = preset.read_noise, preset.well_capacity
+        QE_SPEC = ("parametric", peak_qe, depth_um * 1e-6, blue_edge_nm * 1e-9)
+        SENSOR_NOTE = ("Approximate QE from the c-Si absorption coefficient: "
+                       "QE = A [1 - exp(-alpha(lam) d)] s(lam) with peak "
+                       f"{peak_qe:.2f}, d = {depth_um:g} um, blue edge "
+                       f"{blue_edge_nm} nm. A class model, not a measured curve.")
+    elif sensor_key == "table":
+        preset = SENSOR_PRESETS["fsi_3p45"]
+        st.caption("Edit the points (add rows as needed). Linear interpolation "
+                   "between points, zero outside the table.")
+        default_pts = pd.DataFrame({
+            "wavelength_nm": [400, 500, 550, 600, 700, 800, 900, 1000],
+            "qe_pct": [45, 70, 75, 75, 65, 45, 25, 7]})
+        edited = st.data_editor(
+            default_pts, num_rows="dynamic", hide_index=True, key="qe_table",
+            column_config={
+                "wavelength_nm": st.column_config.NumberColumn(
+                    "Wavelength [nm]", min_value=300, max_value=1200, step=5),
+                "qe_pct": st.column_config.NumberColumn(
+                    "QE [%]", min_value=0, max_value=100, step=1)})
+        by_lam = {}
+        for lam_nm_pt, q in zip(edited["wavelength_nm"], edited["qe_pct"]):
+            if pd.notna(lam_nm_pt) and pd.notna(q):
+                by_lam[float(lam_nm_pt) * 1e-9] = float(q) / 100.0
+        pts = tuple(sorted(by_lam.items()))
+        if len(pts) < 2:
+            st.error("Enter at least two (wavelength, QE) points.")
+            st.stop()
+        default_read, default_well = preset.read_noise, preset.well_capacity
+        QE_SPEC = ("table", pts)
+        SENSOR_NOTE = f"QE from {len(pts)} user-entered points, linearly interpolated."
+    else:
+        preset = SENSOR_PRESETS[sensor_key]
+        default_read, default_well = preset.read_noise, preset.well_capacity
+        QE_SPEC = ("preset", sensor_key)
+        SENSOR_NOTE = preset.provenance
+        st.caption(preset.provenance)
+    SENSOR_NAME = ({"parametric": "parametric silicon sensor",
+                    "table": "user-defined QE table"}.get(sensor_key, preset.short_name))
+    pixel_pitch_um = st.number_input("Pixel pitch [um]", 1.0, 20.0,
+                                     preset.pixel_pitch * 1e6, 0.05,
+                                     key=f"pitch_{sensor_key}")
+    read_noise = st.number_input("Read noise [e- rms]", 0.1, 50.0,
+                                 float(default_read), 0.1,
+                                 key=f"rn_{sensor_key}_{gain_mode}")
+    well = st.number_input("Full well [e-]", 500.0, 500000.0,
+                           float(default_well), 100.0,
+                           key=f"well_{sensor_key}_{gain_mode}")
+    st.caption("With a hot pixel in frame the exposure is saturation-capped, so "
+               "the QE level cancels and the **full well** sets precision; the "
+               "QE shape still weights the bands and sets where read noise and "
+               "the minimum exposure bite.")
+
+
 st.sidebar.header("Notch pair")
 l1_nm = st.sidebar.slider("Short notch center [nm]", 420, 750, 620, 5)
 w1_nm = st.sidebar.slider("Short notch width [nm]", 10, 80, 30, 5)
@@ -204,36 +299,21 @@ st.sidebar.header("Averaging")
 binning = st.sidebar.select_slider("Pixel binning", [1, 2, 4], value=2)
 frames = st.sidebar.slider("Frames averaged", 1, 32, 8)
 
-with st.sidebar.expander("Sensor: Sony IMX900", expanded=True):
-    st.caption(IMX900_SPECS["name"] + " -- " + IMX900_SPECS["format"] + ".")
-    gain_mode = st.radio(
-        "Conversion-gain mode", ["lcg", "hcg"], horizontal=True,
-        format_func=lambda m: {"lcg": "LCG (large well)",
-                               "hcg": "HCG (low noise)"}[m],
-        help="LCG: FRAMOS EMVA 1288, 9458 e- well / 5.56 e- read. "
-             "HCG: PTC-measured, 2183 e- well / 1.39 e- read. A scene with "
-             "3000 C content is well-limited, so LCG is the default.")
-    mode = IMX900_GAIN_MODES[gain_mode]
-    read_noise = st.number_input("Read noise [e- rms]", 0.5, 10.0,
-                                 mode["read_noise"], 0.1,
-                                 key=f"rn_{gain_mode}")
-    well = st.number_input("Full well [e-]", 1000.0, 30000.0,
-                           mode["well_capacity"], 100.0,
-                           key=f"well_{gain_mode}")
-
+PIXEL_PITCH = pixel_pitch_um * 1e-6
+MIN_EXPOSURE = preset.min_exposure
+QE_FN = qe_from_spec(QE_SPEC)
 TAU_EFF = tau_optics * 10.0**(-nd_od)
-CAM = imx900_camera(f_number, TAU_EFF, gain_mode, read_noise=read_noise,
-                    well_capacity=well)
+CAM = camera_from_spec(QE_SPEC, PIXEL_PITCH, f_number, TAU_EFF, read_noise, well)
 L1, W1, L2, W2 = l1_nm * 1e-9, w1_nm * 1e-9, l2_nm * 1e-9, w2_nm * 1e-9
 T_MAX_K = t_max_c + 273.15
 LAM_EQ = equivalent_wavelength(L1, L2)
 
 st.title("Two-notch ratio pyrometry designer")
-st.caption(f"Engine-nozzle thermography, 1500-3000 C primary band, on the "
-           f"Sony IMX900 ({IMX900_SPECS['pixel_pitch'] * 1e6:.2f} um pixels, "
-           f"{gain_mode.upper()} mode: {well / 1e3:.2f} ke- well, "
-           f"{read_noise:g} e- read). Selected pair: "
-           f"**{l1_nm} / {l2_nm} nm**, equivalent wavelength "
+MODE_NOTE = f", {gain_mode.upper()} mode" if sensor_key == "imx900" else ""
+st.caption(f"Engine-nozzle thermography, 1500-3000 C primary band. Sensor: "
+           f"**{SENSOR_NAME}** ({PIXEL_PITCH * 1e6:.2f} um pixels, "
+           f"{well / 1e3:.2f} ke- well, {read_noise:g} e- read{MODE_NOTE}). "
+           f"Selected pair: **{l1_nm} / {l2_nm} nm**, equivalent wavelength "
            f"lam_eq = {LAM_EQ * 1e9:.0f} nm.")
 
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -245,49 +325,86 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 # ============================================================ story 1
 with tab1:
-    st.subheader("Spacing wins -- until the short notch runs out of photons")
+    st.subheader("Spacing wins -- until the moving notch runs out of photons")
     st.markdown(
         "Temperature error scales with the **equivalent wavelength** "
         "lam_eq = lam1 lam2/(lam2 - lam1): sigma_T = (lam_eq T^2/c2) x "
-        "(ratio noise). Spreading the notches shrinks lam_eq (dashed line). "
-        "But with the exposure pinned by the hottest pixel in frame, the "
-        "short notch's photon count collapses as it moves blue -- the solid "
-        "line turns back up. The optimum is the balance."
+        "(ratio noise). Each solid curve moves **one** notch while the other "
+        "stays at its sidebar setting: blue slides the short notch with the "
+        f"long one held at {l2_nm} nm, orange slides the long notch with the "
+        f"short one held at {l1_nm} nm. Both pass through the selected pair "
+        "(circles) at the same NEdT. The dashed curves are what the lam_eq "
+        "law alone predicts if the ratio noise stayed at its selected-pair "
+        "value -- spreading the notches always helps there. The solid curves "
+        "peel away from them where a notch runs out of photons: the exposure "
+        "is pinned by the hottest pixel in frame, so the short notch collapses "
+        "as it moves blue. Stars mark the best position of each notch with "
+        "the other held."
     )
-    t_eval_c = st.slider("Evaluate precision at scene temperature [C]",
-                         1300, 3000, 1500, 50, key="teval1")
+    ctl1, ctl2 = st.columns([3, 1])
+    t_eval_c = ctl1.slider("Evaluate precision at scene temperature [C]",
+                           1300, 3000, 1500, 50, key="teval1")
+    show_law = ctl2.checkbox("Show lam_eq law", value=True, key="law1")
     t_eval_k = t_eval_c + 273.15
 
+    def nedt_pair(l1, l2):
+        return sigma_ratio_vs_t(np.array([t_eval_k]), l1, W1, l2, W2, CAM,
+                                T_MAX_K, fill, fps)[0][0]
+
+    sig_sel = nedt_pair(L1, L2)
     l1_sweep = np.linspace(420e-9, L2 - 60e-9, 60)
-    sig_full = np.array([
-        sigma_ratio_vs_t(np.array([t_eval_k]), l1, W1, L2, W2, CAM,
-                         T_MAX_K, fill, fps)[0][0]
-        for l1 in l1_sweep
-    ])
-    sig_law = (equivalent_wavelength(l1_sweep, L2) * t_eval_k**2 / C2) * 0.01
-    i_opt = int(np.argmin(sig_full))
+    l2_sweep = np.linspace(L1 + 60e-9, 975e-9, 60)
+    sig_short = np.array([nedt_pair(l1, L2) for l1 in l1_sweep])
+    sig_long = np.array([nedt_pair(L1, l2) for l2 in l2_sweep])
+    law_short = sig_sel * equivalent_wavelength(l1_sweep, L2) / LAM_EQ
+    law_long = sig_sel * equivalent_wavelength(L1, l2_sweep) / LAM_EQ
+    i_s, i_l = int(np.argmin(sig_short)), int(np.argmin(sig_long))
 
     fig = go.Figure()
+    for x, y, color, name in (
+        (l1_sweep, sig_short, BLUE,
+         f"short notch moves (long held at {l2_nm} nm)"),
+        (l2_sweep, sig_long, ORANGE,
+         f"long notch moves (short held at {l1_nm} nm)"),
+    ):
+        fig.add_trace(go.Scatter(
+            x=x * 1e9, y=y, name=name, line=dict(color=color, width=2),
+            hovertemplate="%{x:.0f} nm: NEdT = %{y:.0f} K<extra></extra>"))
+    if show_law:
+        for x, y, color in ((l1_sweep, law_short, BLUE),
+                            (l2_sweep, law_long, ORANGE)):
+            fig.add_trace(go.Scatter(
+                x=x * 1e9, y=y, line=dict(color=color, width=1.2, dash="dash"),
+                name="lam_eq law alone (ratio noise held at its selected-pair value)",
+                legendgroup="law", showlegend=color == BLUE,
+                hovertemplate="%{x:.0f} nm: %{y:.0f} K (lam_eq law)<extra></extra>"))
+    for xs, ys, color, label in (
+        (l1_sweep[i_s], sig_short[i_s], BLUE,
+         f"best short notch {l1_sweep[i_s] * 1e9:.0f} nm"),
+        (l2_sweep[i_l], sig_long[i_l], ORANGE,
+         f"best long notch {l2_sweep[i_l] * 1e9:.0f} nm"),
+    ):
+        fig.add_trace(go.Scatter(
+            x=[xs * 1e9], y=[ys], mode="markers+text",
+            marker=dict(color=color, size=11, symbol="star"),
+            text=[label], textposition="top center", cliponaxis=False,
+            textfont=dict(color=INK2, size=11), showlegend=False,
+            hoverinfo="skip"))
     fig.add_trace(go.Scatter(
-        x=l1_sweep * 1e9, y=sig_full, name="full photon-noise model",
-        line=dict(color=BLUE, width=2),
-        hovertemplate="lam1 = %{x:.0f} nm<br>NEdT = %{y:.0f} K<extra></extra>"))
-    fig.add_trace(go.Scatter(
-        x=l1_sweep * 1e9, y=sig_law, name="lam_eq law alone (fixed 1% ratio noise)",
-        line=dict(color=ORANGE, width=2, dash="dash"),
-        hovertemplate="lam1 = %{x:.0f} nm<br>NEdT = %{y:.1f} K<extra></extra>"))
-    fig.add_trace(go.Scatter(
-        x=[l1_sweep[i_opt] * 1e9], y=[sig_full[i_opt]], mode="markers+text",
-        marker=dict(color=BLUE, size=10, symbol="star"),
-        text=[f"optimum {l1_sweep[i_opt] * 1e9:.0f} nm"], textposition="top center",
-        textfont=dict(color=INK2, size=11), showlegend=False, hoverinfo="skip"))
-    fig.add_vline(x=l1_nm, line=dict(color=MUTED, dash="dot", width=1),
-                  annotation_text=f"selected lam1 = {l1_nm} nm",
-                  annotation_font_color=MUTED)
+        x=[l1_nm, l2_nm], y=[sig_sel, sig_sel], mode="markers",
+        marker=dict(color=[BLUE, ORANGE], size=9,
+                    line=dict(color=INK, width=1)),
+        name=f"selected pair {l1_nm}/{l2_nm} nm: {sig_sel:.0f} K",
+        hovertemplate="selected pair: %{y:.0f} K<extra></extra>"))
+    for x, label in ((l1_nm, f"short notch {l1_nm} nm"),
+                     (l2_nm, f"long notch {l2_nm} nm")):
+        fig.add_vline(x=x, line=dict(color=MUTED, dash="dot", width=1),
+                      annotation_text=label, annotation_position="bottom right",
+                      annotation_font_color=MUTED)
     st.plotly_chart(style(
-        fig, f"Short notch center lam1 [nm]   (long notch fixed at {l2_nm} nm)",
+        fig, "Center wavelength of the notch being moved [nm]",
         f"NEdT at {t_eval_c} C [K]  (per pixel, per frame)", logy=True),
-        use_container_width=True)
+        width="stretch")
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -325,7 +442,7 @@ with tab1:
         st.plotly_chart(style(
             figw, "Short notch width [nm]",
             f"NEdT at {t_eval_c} C [K]", logy=True, height=380),
-            use_container_width=True)
+            width="stretch")
 
     with col_b:
         st.markdown(
@@ -334,8 +451,8 @@ with tab1:
             "is broad; dotted guides mark plume emission features (Na 589, "
             "H-alpha 656, K 767, H2O 940 nm) that notches must avoid."
         )
-        l1g, l2g, zmap = pair_map(t_eval_k, f_number, TAU_EFF, read_noise,
-                                  well, T_MAX_K, fill, fps)
+        l1g, l2g, zmap = pair_map(t_eval_k, QE_SPEC, PIXEL_PITCH, f_number,
+                                  TAU_EFF, read_noise, well, T_MAX_K, fill, fps)
         figm = go.Figure(go.Heatmap(
             x=l1g * 1e9, y=l2g * 1e9, z=np.log10(zmap),
             colorscale="Blues", reversescale=False,
@@ -357,7 +474,7 @@ with tab1:
         figm.update_layout(showlegend=False)
         st.plotly_chart(style(
             figm, "Short notch lam1 [nm]", "Long notch lam2 [nm]", height=380),
-            use_container_width=True)
+            width="stretch")
 
 # ============================================================ story 2
 with tab2:
@@ -411,7 +528,7 @@ with tab2:
     st.plotly_chart(style(
         fig2, "Scene temperature [C]",
         f"Electrons per frame in the {l1_nm} nm notch", logy=True),
-        use_container_width=True)
+        width="stretch")
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Combined radiometric uncertainty", f"+/- {delta * 100:.0f} %")
@@ -450,12 +567,12 @@ with tab2:
         hovertemplate="%{x:.0f} C: %{y:.0f} K<extra></extra>"))
     st.plotly_chart(style(
         fig3, "Scene temperature [C]", "Systematic temperature error [K]",
-        logy=True), use_container_width=True)
+        logy=True), width="stretch")
 
 # ============================================================ story 3
 with tab3:
     st.subheader(f"Temperature certainty with the {l1_nm}/{l2_nm} nm pair "
-                 "on the IMX900")
+                 f"on the {SENSOR_NAME}")
     temps_k = np.linspace(1300 + 273.15, 3050 + 273.15, 80)
     temps_c = temps_k - 273.15
     sig_pix, exposures = sigma_ratio_vs_t(temps_k, L1, W1, L2, W2, CAM,
@@ -472,11 +589,11 @@ with tab3:
     m[2].metric("NEdT @ 3000 C", f"{at(3000):.1f} K")
     m[3].metric("Exposures (short / long)",
                 f"{exposures[0] * 1e6:.1f} / {exposures[1] * 1e6:.1f} us")
-    if min(exposures) < IMX900_SPECS["min_exposure"]:
+    if min(exposures) < MIN_EXPOSURE:
         st.warning(
-            f"Shortest exposure is below the ~"
-            f"{IMX900_SPECS['min_exposure'] * 1e6:.0f} us global-shutter floor "
-            "-- add ND (sidebar) or stop down; precision is unaffected.")
+            f"Shortest exposure is below the ~{MIN_EXPOSURE * 1e6:.0f} us "
+            "global-shutter floor assumed for this sensor -- add ND "
+            "(sidebar) or stop down; precision is unaffected.")
 
     fig4 = go.Figure()
     fig4.add_vrect(x0=1500, x1=3000, fillcolor="rgba(237,161,0,0.07)",
@@ -494,7 +611,7 @@ with tab3:
         hovertemplate="%{x:.0f} C: %{y:.1f} K<extra></extra>"))
     st.plotly_chart(style(
         fig4, "Scene temperature [C]", "Ratio NEdT [K]", logy=True),
-        use_container_width=True)
+        width="stretch")
 
     st.markdown(
         "**Why precision dies toward the cold end:** the exposure is pinned "
@@ -519,44 +636,59 @@ with tab3:
         hline_log(fig5, y, label, dash)
     st.plotly_chart(style(
         fig5, "Scene temperature [C]", "Electrons per pixel per frame",
-        logy=True), use_container_width=True)
+        logy=True), width="stretch")
 
-    with st.expander("IMX900 model & provenance"):
+    with st.expander("Sensor model & provenance"):
+        if sensor_key == "imx900":
+            st.markdown(
+                f"- {IMX900_SPECS['name']}: {IMX900_SPECS['format']}, "
+                f"{IMX900_SPECS['pixel_pitch'] * 1e6:.2f} um pixels, 12-bit ADC. "
+                "Sensor values are taken verbatim from the StarTrackerCentroid "
+                "repository presets (`framegen/sensors/presets/imx900.py`).\n"
+                f"- LCG: {IMX900_GAIN_MODES['lcg']['well_capacity']:.0f} e- well, "
+                f"{IMX900_GAIN_MODES['lcg']['read_noise']:.2f} e- read "
+                f"({IMX900_GAIN_MODES['lcg']['source']}). HCG: "
+                f"{IMX900_GAIN_MODES['hcg']['well_capacity']:.0f} e- well, "
+                f"{IMX900_GAIN_MODES['hcg']['read_noise']:.2f} e- read "
+                f"({IMX900_GAIN_MODES['hcg']['source']}).\n"
+                "- QE: the 121-point tabulated curve (400-1000 nm) from the same "
+                f"repository, whose raw peak of {IMX900_QE_TABLE_PEAK:.3f} is "
+                "flagged there as a probable normalised response; it is scaled "
+                f"here to the Basler EMVA 1288 absolute peak of "
+                f"{IMX900_BASLER_EMVA_PEAK_QE:.3f}.\n"
+                f"- The {MIN_EXPOSURE * 1e6:.0f} us minimum exposure is an "
+                "assumption. Dark current (4.5 e-/s at 60 C) is negligible at "
+                "these exposures and not modelled."
+            )
+        else:
+            st.markdown(
+                f"- **{SENSOR_NAME}.** {SENSOR_NOTE}\n"
+                f"- Pixel pitch {PIXEL_PITCH * 1e6:.2f} um, full well {well:.0f} e-, "
+                f"read noise {read_noise:.2f} e- rms, assumed minimum exposure "
+                f"{MIN_EXPOSURE * 1e6:.0f} us -- all editable in the sidebar. "
+                "Dark current is not modelled."
+            )
         st.markdown(
-            f"- {IMX900_SPECS['name']}: {IMX900_SPECS['format']}, "
-            f"{IMX900_SPECS['pixel_pitch'] * 1e6:.2f} um pixels, 12-bit ADC. "
-            "Sensor values are taken verbatim from the StarTrackerCentroid "
-            "repository presets (`framegen/sensors/presets/imx900.py`).\n"
-            f"- LCG: {IMX900_GAIN_MODES['lcg']['well_capacity']:.0f} e- well, "
-            f"{IMX900_GAIN_MODES['lcg']['read_noise']:.2f} e- read "
-            f"({IMX900_GAIN_MODES['lcg']['source']}). HCG: "
-            f"{IMX900_GAIN_MODES['hcg']['well_capacity']:.0f} e- well, "
-            f"{IMX900_GAIN_MODES['hcg']['read_noise']:.2f} e- read "
-            f"({IMX900_GAIN_MODES['hcg']['source']}).\n"
-            "- QE: the 121-point tabulated curve (400-1000 nm) from the same "
-            f"repository, whose raw peak of {IMX900_QE_TABLE_PEAK:.3f} is "
-            "flagged there as a probable normalised response; it is scaled "
-            f"here to the Basler EMVA 1288 absolute peak of "
-            f"{IMX900_BASLER_EMVA_PEAK_QE:.3f}. In the saturation-capped "
-            "regime the scale cancels out of the precision budget.\n"
-            f"- The {IMX900_SPECS['min_exposure'] * 1e6:.0f} us minimum "
-            "exposure is an assumption. Dark current (4.5 e-/s at 60 C) is "
-            "negligible at these exposures and not modelled.\n"
+            "- With a hot pixel in frame the exposure is saturation-capped, so "
+            "the QE *level* cancels out of the precision budget (it rescales "
+            "the exposure, not the electron count); the QE *shape* still "
+            "weights each band integral and sets where the read-noise floor "
+            "and the minimum exposure bite.\n"
             "- Slope d(lnR)/dT uses the Wien limit (< 3% from full Planck "
             "integrals here); electron counts use full integrals of "
             "QE x filter x Planck."
         )
         lam_qe = np.linspace(350e-9, 1100e-9, 200)
         figq = go.Figure(go.Scatter(
-            x=lam_qe * 1e9, y=imx900_qe(lam_qe) * 100,
-            line=dict(color=BLUE, width=2), name="IMX900 QE (tabulated)",
+            x=lam_qe * 1e9, y=QE_FN(lam_qe) * 100,
+            line=dict(color=BLUE, width=2), name=f"{SENSOR_NAME} QE",
             hovertemplate="%{x:.0f} nm: %{y:.0f}%<extra></extra>"))
         for x, lbl in ((l1_nm, "lam1"), (l2_nm, "lam2")):
             figq.add_vline(x=x, line=dict(color=MUTED, dash="dot", width=1),
                            annotation_text=lbl, annotation_font_color=MUTED)
         st.plotly_chart(style(
             figq, "Wavelength [nm]", "Quantum efficiency [%]", height=300),
-            use_container_width=True)
+            width="stretch")
 
 # ============================================================ story 4
 with tab4:
@@ -670,11 +802,11 @@ with tab4:
         fige.add_vline(x=theta_v_deg, line=dict(color=MUTED, dash="dot", width=1))
         st.plotly_chart(style(fige, "Viewing angle from surface normal [deg]",
                               "Directional emissivity / relative band ratio",
-                              height=380), use_container_width=True)
+                              height=380), width="stretch")
     with cb:
         angles, one_a, two_a = bias_vs_angle(
             mat_name, nk, t4, theta_s_deg, sun, resid, pp, L1, W1, L2, W2, f_number,
-            TAU_EFF, gain_mode, read_noise, well)
+            TAU_EFF, QE_SPEC, PIXEL_PITCH, read_noise, well)
         figa = go.Figure()
         figa.add_trace(go.Scatter(x=angles, y=one_a, name="one band (620 nm)",
                                   line=dict(color=BLUE, width=2),
@@ -686,11 +818,11 @@ with tab4:
         figa.add_vline(x=theta_v_deg, line=dict(color=MUTED, dash="dot", width=1))
         st.plotly_chart(style(figa, "Viewing angle from surface normal [deg]",
                               f"Apparent - true temperature at {t_eval4_c} C [K]",
-                              height=380), use_container_width=True)
+                              height=380), width="stretch")
 
     temps4, one_t, two_t = bias_vs_temperature(
         mat_name, nk, theta_v_deg, theta_s_deg, sun, resid, pp, L1, W1, L2, W2, f_number,
-        TAU_EFF, gain_mode, read_noise, well)
+        TAU_EFF, QE_SPEC, PIXEL_PITCH, read_noise, well)
     figt = go.Figure()
     figt.add_trace(go.Scatter(x=temps4, y=one_t, name="one band (620 nm)",
                               line=dict(color=BLUE, width=2),
@@ -702,7 +834,7 @@ with tab4:
     figt.add_vrect(x0=1500, x1=3000, fillcolor="rgba(237,161,0,0.07)", line_width=0)
     st.plotly_chart(style(figt, "Scene temperature [C]",
                           f"Apparent - true temperature at {theta_v_deg} deg view [K]"),
-                    use_container_width=True)
+                    width="stretch")
     st.caption(
         "Smooth-surface Fresnel emissivity with illustrative optical constants "
         "(rough surfaces are more Lambertian, so this is the worst case for the "
