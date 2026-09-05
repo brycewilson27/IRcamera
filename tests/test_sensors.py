@@ -18,9 +18,13 @@ LAM = np.linspace(350e-9, 1100e-9, 151)
 
 
 def test_silicon_absorption_table():
-    # Green (2008) anchors: alpha(600 nm) = 4.14e3 cm^-1, alpha(1000 nm) = 64 cm^-1.
-    assert silicon_absorption_coefficient(600e-9) == pytest.approx(4.14e5, rel=1e-6)
-    assert silicon_absorption_coefficient(1000e-9) == pytest.approx(6.4e3, rel=1e-6)
+    # Green (2008) anchors: alpha(600 nm) = 4.14e3 cm^-1, alpha(1000 nm) = 64 cm^-1;
+    # the smoothing spline stays within 5% of every tabulated value.
+    assert silicon_absorption_coefficient(600e-9) == pytest.approx(4.14e5, rel=0.05)
+    assert silicon_absorption_coefficient(1000e-9) == pytest.approx(6.4e3, rel=0.05)
+    from ircam.sensors import _SI_ALPHA_CM, _SI_ALPHA_LAM_NM
+    fitted = silicon_absorption_coefficient(_SI_ALPHA_LAM_NM * 1e-9) / 100.0
+    assert np.all(np.abs(fitted / _SI_ALPHA_CM - 1.0) < 0.05)
     alpha = silicon_absorption_coefficient(np.linspace(300e-9, 1200e-9, 500))
     assert np.all(np.diff(alpha) < 0)  # monotone toward the band gap
     assert silicon_absorption_coefficient(1300e-9) < 1.0  # past the band gap

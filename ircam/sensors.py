@@ -54,7 +54,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
-from scipy.interpolate import PchipInterpolator
+from scipy.interpolate import PchipInterpolator, UnivariateSpline
 
 from .pyrometry import PyroCamera
 
@@ -165,21 +165,40 @@ _SI_ALPHA_CM = np.array([
 ])
 
 
-_LOG_ALPHA_SPLINE = PchipInterpolator(_SI_ALPHA_LAM_NM, np.log(_SI_ALPHA_CM),
-                                      extrapolate=False)
+# Interpolation of log alpha. Over 400-1100 nm, where the table is dense, a
+# cubic smoothing spline removes the ~5% neighbour-to-neighbour scatter of the
+# rounded values that would otherwise print as kinks in a QE curve (it stays
+# within 5% of every tabulated value; enforced by test). Outside that range
+# the curve is steep (UV edge, band gap), so shape-preserving PCHIP through
+# the tabulated points and the spline's joint values keeps it monotone.
+_SPL_LO_NM, _SPL_HI_NM = 400.0, 1100.0
+_log_alpha = np.log(_SI_ALPHA_CM)
+_mid = (_SI_ALPHA_LAM_NM >= _SPL_LO_NM) & (_SI_ALPHA_LAM_NM <= _SPL_HI_NM)
+_LOG_ALPHA_SPLINE = UnivariateSpline(_SI_ALPHA_LAM_NM[_mid], _log_alpha[_mid],
+                                     k=3, s=0.01, ext="const")
+_lo, _hi = _SI_ALPHA_LAM_NM < _SPL_LO_NM, _SI_ALPHA_LAM_NM > _SPL_HI_NM
+_LOG_ALPHA_OUTER = PchipInterpolator(
+    np.concatenate((_SI_ALPHA_LAM_NM[_lo], [_SPL_LO_NM, _SPL_HI_NM], _SI_ALPHA_LAM_NM[_hi])),
+    np.concatenate((_log_alpha[_lo], _LOG_ALPHA_SPLINE([_SPL_LO_NM, _SPL_HI_NM]),
+                    _log_alpha[_hi])),
+    extrapolate=True)
 
 
 def silicon_absorption_coefficient(lam):
     """c-Si absorption coefficient alpha(lam) [1/m] at 300 K.
 
-    Shape-preserving (PCHIP) interpolation of log alpha over the Green (2008)
-    table, so the curve is smooth and stays monotone; held at the 300 nm
-    value below it and effectively zero beyond 1200 nm (the band gap).
+    Smoothing spline of log alpha over the Green (2008) table for
+    400-1100 nm (within 5% of the tabulated values, kink-free), monotone
+    PCHIP through the table outside that range, held at the 300 nm value
+    below the table and effectively zero beyond 1200 nm (the band gap).
     """
-    lam_nm = np.clip(np.asarray(lam, dtype=float) * 1e9, _SI_ALPHA_LAM_NM[0], None)
-    log_alpha = _LOG_ALPHA_SPLINE(lam_nm)
-    log_alpha = np.where(lam_nm > _SI_ALPHA_LAM_NM[-1], np.log(1e-9), log_alpha)
-    return np.exp(log_alpha) * 100.0
+    lam_nm = np.round(np.asarray(lam, dtype=float) * 1e9, 6)
+    lam_nm = np.clip(lam_nm, _SI_ALPHA_LAM_NM[0], _SI_ALPHA_LAM_NM[-1])
+    inside = (lam_nm >= _SPL_LO_NM) & (lam_nm <= _SPL_HI_NM)
+    log_alpha = np.where(inside, _LOG_ALPHA_SPLINE(lam_nm), _LOG_ALPHA_OUTER(lam_nm))
+    beyond = np.round(np.asarray(lam, dtype=float) * 1e9, 6) > _SI_ALPHA_LAM_NM[-1]
+    out = np.exp(np.where(beyond, np.log(1e-9), log_alpha)) * 100.0
+    return out.item() if np.ndim(out) == 0 else out
 
 
 _QE_NORM_GRID = np.linspace(350e-9, 1100e-9, 751)
