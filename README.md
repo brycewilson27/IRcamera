@@ -5,6 +5,10 @@ toolkit (`ircam`) plus a requirements-flowdown analysis built on it.
 
 ## Interactive designer app
 
+**Live app: <https://ircameraexplainer.streamlit.app>** (Streamlit Community
+Cloud, deployed from branch `claude/ir-camera-physics-analysis-ljkfl2`;
+every push to that branch redeploys it).
+
 `streamlit_app.py` is an interactive two-notch pyrometry designer. Pick a
 sensor QE curve in the sidebar (the tabulated Sony IMX900, approximate
 silicon sensor classes, a three-parameter QE model, or your own table),
